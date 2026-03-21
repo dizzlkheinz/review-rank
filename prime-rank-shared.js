@@ -9,8 +9,6 @@
 })(
 	typeof globalThis !== "undefined" ? globalThis : this,
 	function createPrimeRankShared() {
-		"use strict";
-
 		const DEFAULT_SETTINGS = Object.freeze({
 			enabled: true,
 			minimumRatings: 100,
@@ -29,8 +27,7 @@
 
 		const BRAND_WHITELIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 		const PRIME_TOKEN_PATTERN = /p_85:[^,&#"'\\\s)]+/g;
-		const BRAND_PREFIX_PATTERN =
-			/^(brand|marque|marca|marke|visit the|by)\s+/;
+		const BRAND_PREFIX_PATTERN = /^(brand|marque|marca|marke|visit the|by)\s+/;
 		const BRAND_SUFFIX_PATTERN = /\s+store$/;
 		const COUNT_KEYWORD_PATTERN =
 			/\b(ratings?|reviews?|bewertung(?:en)?|rezension(?:en)?|evaluations?|avis|calificaciones?|opiniones|recensioni|recensies|avaliac(?:ao|oes)|ratings)\b/i;
@@ -84,9 +81,7 @@
 
 		function shouldRefreshBrandWhitelist(options = {}) {
 			const now = Number(options.now ?? Date.now());
-			const maxAgeMs = Number(
-				options.maxAgeMs ?? BRAND_WHITELIST_MAX_AGE_MS,
-			);
+			const maxAgeMs = Number(options.maxAgeMs ?? BRAND_WHITELIST_MAX_AGE_MS);
 			const currentWhitelist = normalizeBrandWhitelist(options.brandWhitelist);
 			const fetchedAt = Number(options.brandWhitelistFetchedAt || 0);
 
@@ -222,7 +217,8 @@
 				return 0;
 			}
 
-			const numericTokens = rawText.match(/\d+(?:[.,\u202f\u00a0\s]\d+)*/g) || [];
+			const numericTokens =
+				rawText.match(/\d+(?:[.,\u202f\u00a0\s]\d+)*/g) || [];
 			const parsedNumbers = numericTokens
 				.map(parseNumericToken)
 				.filter(Boolean);

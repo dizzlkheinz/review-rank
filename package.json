@@ -3,6 +3,12 @@
 	"version": "0.1.0",
 	"private": true,
 	"scripts": {
+		"format": "biome format --write .",
+		"lint": "biome check .",
+		"verify": "npm run lint && npm test",
 		"test": "node --test"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.8"
 	}
 }

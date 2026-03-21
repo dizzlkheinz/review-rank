@@ -59,7 +59,10 @@ test("buildCanonicalSearchUrl rewrites Amazon search urls deterministically", ()
 		);
 
 		for (const snippet of fixture.includes) {
-			assert.match(result.url, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.match(
+				result.url,
+				new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+			);
 		}
 	}
 });
@@ -74,10 +77,10 @@ test("extractPrimeTokensFromText deduplicates tokens", () => {
 });
 
 test("parseBrandWhitelist removes blanks and duplicates", () => {
-	assert.deepEqual(
-		shared.parseBrandWhitelist("Apple\n\nSamsung\nApple\n"),
-		["Apple", "Samsung"],
-	);
+	assert.deepEqual(shared.parseBrandWhitelist("Apple\n\nSamsung\nApple\n"), [
+		"Apple",
+		"Samsung",
+	]);
 });
 
 test("shouldRefreshBrandWhitelist expires stale entries only", () => {

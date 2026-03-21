@@ -291,10 +291,7 @@ function addScoredPrimeTokens(scoresByToken, text, score) {
 }
 
 function resolvePrimeToken() {
-	if (
-		STATE.primeTokenHref === window.location.href &&
-		STATE.primeTokenValue
-	) {
+	if (STATE.primeTokenHref === window.location.href && STATE.primeTokenValue) {
 		return STATE.primeTokenValue;
 	}
 
@@ -302,7 +299,9 @@ function resolvePrimeToken() {
 
 	addScoredPrimeTokens(scoresByToken, window.location.href, 100);
 
-	for (const element of document.querySelectorAll(PRIME_TOKEN_ATTRIBUTE_SELECTOR)) {
+	for (const element of document.querySelectorAll(
+		PRIME_TOKEN_ATTRIBUTE_SELECTOR,
+	)) {
 		for (const attributeName of [
 			"href",
 			"data-url",
@@ -403,7 +402,9 @@ function ensureBrandIndex() {
 }
 
 function parseRatingsCount(card) {
-	return parseRatingsCountFromTexts(getTextCandidates(card, RATING_TEXT_SELECTORS));
+	return parseRatingsCountFromTexts(
+		getTextCandidates(card, RATING_TEXT_SELECTORS),
+	);
 }
 
 function findWhitelistedBrand(card) {
@@ -413,7 +414,10 @@ function findWhitelistedBrand(card) {
 		return "";
 	}
 
-	return matchWhitelistedBrand(getTextCandidates(card, BRAND_TEXT_SELECTORS), brandIndex);
+	return matchWhitelistedBrand(
+		getTextCandidates(card, BRAND_TEXT_SELECTORS),
+		brandIndex,
+	);
 }
 
 function getSponsoredDetectionScopes(card) {
@@ -606,7 +610,9 @@ function applyStandaloneSponsoredBlocks(root = document.body) {
 }
 
 function resetProductFilters() {
-	for (const card of getSearchResultCards(findResultsContainer() || document.body)) {
+	for (const card of getSearchResultCards(
+		findResultsContainer() || document.body,
+	)) {
 		clearCardState(card);
 	}
 
@@ -904,14 +910,16 @@ function observeSettingsChanges() {
 }
 
 function registerMessageHandlers() {
-	extensionApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
-		if (message?.type !== "prime-rank-filter:get-page-status") {
-			return undefined;
-		}
+	extensionApi.runtime.onMessage.addListener(
+		(message, _sender, sendResponse) => {
+			if (message?.type !== "prime-rank-filter:get-page-status") {
+				return undefined;
+			}
 
-		sendResponse({ ...STATE.pageStatus });
-		return undefined;
-	});
+			sendResponse({ ...STATE.pageStatus });
+			return undefined;
+		},
+	);
 }
 
 async function applyFilters() {

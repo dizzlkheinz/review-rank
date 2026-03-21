@@ -1,0 +1,16 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+	"files": {
+		"includes": ["**", "!amazon-brand-whitelist.js", "!!icons"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"linter": {
+		"enabled": true
+	},
+	"javascript": {
+		"globals": ["browser", "chrome"]
+	}
+}

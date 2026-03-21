@@ -72,7 +72,14 @@ It also shows:
 Run:
 
 ```bash
+npm run lint
 npm test
+```
+
+Or run both checks together:
+
+```bash
+npm run verify
 ```
 
 The test suite covers:
@@ -83,6 +90,16 @@ The test suite covers:
 - sponsored-label recognition
 - deterministic Amazon URL rewriting
 - whitelist parsing and refresh-age logic
+
+## Formatting
+
+Run:
+
+```bash
+npm run format
+```
+
+Biome is configured for the repo with tab indentation and ignores the bundled whitelist snapshot in `amazon-brand-whitelist.js`.
 
 ## Notes
 

@@ -110,8 +110,7 @@ function renderPageStatus(pageStatus) {
 	}
 
 	if (!pageStatus.enabled && pageStatus.supportedPage) {
-		elements.pageStatus.textContent =
-			`Extension off on this Amazon results page. ${pageStatus.totalCount} results currently visible.`;
+		elements.pageStatus.textContent = `Extension off on this Amazon results page. ${pageStatus.totalCount} results currently visible.`;
 		return;
 	}
 

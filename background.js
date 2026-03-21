@@ -38,7 +38,8 @@ function buildWhitelistStatus(rawState) {
 		count: whitelist.length,
 		fetchedAt: Number(rawState.brandWhitelistFetchedAt || 0),
 		source:
-			rawState.brandWhitelistSource || (whitelist.length ? "bundled" : "unavailable"),
+			rawState.brandWhitelistSource ||
+			(whitelist.length ? "bundled" : "unavailable"),
 		lastAttemptAt: Number(rawState.brandWhitelistLastAttemptAt || 0),
 		lastError: String(rawState.brandWhitelistLastError || ""),
 		syncStatus: String(rawState.brandWhitelistSyncStatus || "idle"),
@@ -99,7 +100,9 @@ async function syncBrandWhitelist(options = {}) {
 		const force = options.force === true;
 		const attemptAt = Date.now();
 		const storedState = await getStoredWhitelistState();
-		const currentWhitelist = normalizeBrandWhitelist(storedState.brandWhitelist);
+		const currentWhitelist = normalizeBrandWhitelist(
+			storedState.brandWhitelist,
+		);
 
 		if (!currentWhitelist.length) {
 			await ensureBundledWhitelistFallback();
@@ -179,40 +182,42 @@ function ensureRefreshAlarm() {
 }
 
 function registerRuntimeHandlers() {
-	extensionApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
-		if (
-			message?.type !== "prime-rank-filter:get-whitelist-status" &&
-			message?.type !== "prime-rank-filter:refresh-brand-whitelist"
-		) {
-			return undefined;
-		}
-
-		const run = async () => {
-			switch (message?.type) {
-				case "prime-rank-filter:get-whitelist-status":
-					await ensureBundledWhitelistFallback();
-					return buildWhitelistStatus(await getStoredWhitelistState());
-				case "prime-rank-filter:refresh-brand-whitelist":
-					return syncBrandWhitelist({
-						force: true,
-					});
-				default:
-					return undefined;
+	extensionApi.runtime.onMessage.addListener(
+		(message, _sender, sendResponse) => {
+			if (
+				message?.type !== "prime-rank-filter:get-whitelist-status" &&
+				message?.type !== "prime-rank-filter:refresh-brand-whitelist"
+			) {
+				return undefined;
 			}
-		};
 
-		run()
-			.then((response) => {
-				sendResponse(response);
-			})
-			.catch((error) => {
-				sendResponse({
-					error: error?.message || String(error),
+			const run = async () => {
+				switch (message?.type) {
+					case "prime-rank-filter:get-whitelist-status":
+						await ensureBundledWhitelistFallback();
+						return buildWhitelistStatus(await getStoredWhitelistState());
+					case "prime-rank-filter:refresh-brand-whitelist":
+						return syncBrandWhitelist({
+							force: true,
+						});
+					default:
+						return undefined;
+				}
+			};
+
+			run()
+				.then((response) => {
+					sendResponse(response);
+				})
+				.catch((error) => {
+					sendResponse({
+						error: error?.message || String(error),
+					});
 				});
-			});
 
-		return true;
-	});
+			return true;
+		},
+	);
 }
 
 extensionApi.runtime.onInstalled.addListener(() => {
