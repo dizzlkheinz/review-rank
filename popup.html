@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Prime Rank Filter</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="panel">
+      <header class="hero">
+        <p class="eyebrow">Amazon Search Controls</p>
+        <h1>Prime Rank Filter</h1>
+        <p class="summary">
+          Prime-only and review-rank sorting are enforced automatically when the extension is enabled.
+        </p>
+      </header>
+
+      <form class="controls">
+        <label class="toggle" for="enabled">
+          <span class="toggle-copy">
+            <span class="label">Extension enabled</span>
+            <span class="hint">Changes apply immediately. Turning this on may redirect the current Amazon search page once.</span>
+          </span>
+          <input id="enabled" name="enabled" type="checkbox">
+        </label>
+
+        <label class="field" for="minimumRatings">
+          <span class="label">Minimum review count</span>
+          <input id="minimumRatings" name="minimumRatings" type="number" min="0" step="1" inputmode="numeric">
+          <span class="hint">Products below this threshold are hidden after Amazon loads Prime results sorted by review rank.</span>
+        </label>
+
+        <label class="toggle" for="hideSponsoredResults">
+          <span class="toggle-copy">
+            <span class="label">Hide sponsored results</span>
+            <span class="hint">Block sponsored posts in Amazon search results without relying on any GPL implementation.</span>
+          </span>
+          <input id="hideSponsoredResults" name="hideSponsoredResults" type="checkbox">
+        </label>
+
+        <label class="toggle" for="useBrandWhitelist">
+          <span class="toggle-copy">
+            <span class="label">Use brand whitelist</span>
+            <span class="hint">Hide products whose visible title does not match the locally cached AmazonBrandFilterList allowlist.</span>
+          </span>
+          <input id="useBrandWhitelist" name="useBrandWhitelist" type="checkbox">
+        </label>
+      </form>
+
+      <section class="card" aria-labelledby="pageStatusHeading">
+        <div class="card-header">
+          <h2 id="pageStatusHeading">Current Page</h2>
+          <p class="caption">Live status from the active Amazon tab.</p>
+        </div>
+        <p class="status-copy" id="pageStatus">Open an Amazon search results page to inspect filtering status.</p>
+      </section>
+
+      <section class="card" aria-labelledby="whitelistHeading">
+        <div class="card-header">
+          <div>
+            <h2 id="whitelistHeading">Brand Whitelist</h2>
+            <p class="caption">Bundled snapshot with GitHub refresh support.</p>
+          </div>
+          <button class="refresh-button" id="refreshWhitelist" type="button">Refresh</button>
+        </div>
+        <dl class="meta-list">
+          <div class="meta-row">
+            <dt>Entries</dt>
+            <dd id="whitelistCount">-</dd>
+          </div>
+          <div class="meta-row">
+            <dt>Source</dt>
+            <dd id="whitelistSource">-</dd>
+          </div>
+          <div class="meta-row">
+            <dt>Last refresh</dt>
+            <dd id="whitelistFetchedAt">-</dd>
+          </div>
+          <div class="meta-row">
+            <dt>Status</dt>
+            <dd id="whitelistSyncStatus">-</dd>
+          </div>
+        </dl>
+        <p class="status-copy" id="whitelistError"></p>
+      </section>
+
+      <p class="credit">
+        Brand allowlist source:
+        <a href="https://github.com/chris-mosley/AmazonBrandFilterList" target="_blank" rel="noreferrer">
+          AmazonBrandFilterList by Chris Mosley
+        </a>
+        (MIT).
+      </p>
+
+      <p class="status" id="status" aria-live="polite"></p>
+    </main>
+
+    <script src="prime-rank-shared.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

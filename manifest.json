@@ -1,0 +1,64 @@
+{
+	"manifest_version": 3,
+	"name": "Prime Rank Filter",
+	"version": "0.1.0",
+	"description": "Force Prime-only Amazon search results, sort by review rank, block sponsored posts, hide low-review products, and optionally apply a brand allowlist.",
+	"permissions": ["storage", "alarms"],
+	"host_permissions": ["https://raw.githubusercontent.com/*"],
+	"browser_specific_settings": {
+		"gecko": {
+			"id": "prime-rank-filter@example.com"
+		}
+	},
+	"background": {
+		"service_worker": "background.js",
+		"scripts": [
+			"prime-rank-shared.js",
+			"amazon-brand-whitelist.js",
+			"background.js"
+		]
+	},
+	"action": {
+		"default_title": "Prime Rank Filter",
+		"default_popup": "popup.html",
+		"default_icon": {
+			"48": "icons/icon-48.png",
+			"96": "icons/icon-96.png"
+		}
+	},
+	"icons": {
+		"48": "icons/icon-48.png",
+		"96": "icons/icon-96.png"
+	},
+	"content_scripts": [
+		{
+			"matches": [
+				"*://*.amazon.com/*",
+				"*://*.amazon.ca/*",
+				"*://*.amazon.cn/*",
+				"*://*.amazon.co.uk/*",
+				"*://*.amazon.co.za/*",
+				"*://*.amazon.de/*",
+				"*://*.amazon.fr/*",
+				"*://*.amazon.it/*",
+				"*://*.amazon.es/*",
+				"*://*.amazon.nl/*",
+				"*://*.amazon.se/*",
+				"*://*.amazon.pl/*",
+				"*://*.amazon.com.au/*",
+				"*://*.amazon.com.br/*",
+				"*://*.amazon.com.mx/*",
+				"*://*.amazon.co.jp/*",
+				"*://*.amazon.in/*",
+				"*://*.amazon.sg/*",
+				"*://*.amazon.ae/*",
+				"*://*.amazon.sa/*",
+				"*://*.amazon.com.tr/*",
+				"*://*.amazon.eg/*",
+				"*://*.amazon.com.be/*"
+			],
+			"js": ["prime-rank-shared.js", "content-script.js"],
+			"run_at": "document_idle"
+		}
+	]
+}

@@ -1,0 +1,77 @@
+{
+	"ratings": [
+		{
+			"market": "amazon.com",
+			"candidates": ["12,345 ratings"],
+			"expected": 12345
+		},
+		{
+			"market": "amazon.de",
+			"candidates": ["4,6 von 5 Sternen", "1.234 Bewertungen"],
+			"expected": 1234
+		},
+		{
+			"market": "amazon.fr",
+			"candidates": ["4,4 sur 5 etoiles", "2 345 evaluations"],
+			"expected": 2345
+		},
+		{
+			"market": "amazon.co.jp",
+			"candidates": ["5つ星のうち4.4", "1,234件の評価"],
+			"expected": 1234
+		}
+	],
+	"brands": [
+		{
+			"market": "amazon.com",
+			"brands": ["Apple", "Samsung"],
+			"candidates": ["Apple AirPods Pro"],
+			"expected": "Apple"
+		},
+		{
+			"market": "amazon.de",
+			"brands": ["Bosch", "WMF"],
+			"candidates": ["Bosch Professional Akku-Bohrschrauber"],
+			"expected": "Bosch"
+		},
+		{
+			"market": "amazon.fr",
+			"brands": ["L'Oreal Paris", "BIC"],
+			"candidates": ["L'Oreal Paris Mascara Volume Million Lashes"],
+			"expected": "L'Oreal Paris"
+		},
+		{
+			"market": "amazon.co.jp",
+			"brands": ["Anker", "ASICS"],
+			"candidates": ["Anker モバイルバッテリー"],
+			"expected": "Anker"
+		}
+	],
+	"sponsored": [
+		{
+			"market": "amazon.com",
+			"text": "Sponsored",
+			"expected": true
+		},
+		{
+			"market": "amazon.de",
+			"text": "Gesponsert",
+			"expected": true
+		},
+		{
+			"market": "amazon.fr",
+			"text": "Sponsorise",
+			"expected": true
+		},
+		{
+			"market": "amazon.co.jp",
+			"text": "スポンサー",
+			"expected": true
+		},
+		{
+			"market": "amazon.com",
+			"text": "Top Brand",
+			"expected": false
+		}
+	]
+}

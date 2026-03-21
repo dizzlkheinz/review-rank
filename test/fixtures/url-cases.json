@@ -1,0 +1,34 @@
+[
+	{
+		"name": "adds review rank and prime token",
+		"url": "https://www.amazon.com/s?k=headphones",
+		"primeToken": "p_85:2470955011",
+		"changed": true,
+		"missingPrimeToken": false,
+		"includes": ["s=review-rank", "rh=p_85%3A2470955011"]
+	},
+	{
+		"name": "preserves existing refinements",
+		"url": "https://www.amazon.com/s?k=headphones&rh=n%3A172541",
+		"primeToken": "p_85:2470955011",
+		"changed": true,
+		"missingPrimeToken": false,
+		"includes": ["rh=n%3A172541%2Cp_85%3A2470955011"]
+	},
+	{
+		"name": "reports missing prime token",
+		"url": "https://www.amazon.de/s?k=kaffee",
+		"primeToken": "",
+		"changed": true,
+		"missingPrimeToken": true,
+		"includes": ["s=review-rank"]
+	},
+	{
+		"name": "keeps canonical urls stable",
+		"url": "https://www.amazon.com/s?k=headphones&s=review-rank&rh=p_85%3A2470955011",
+		"primeToken": "",
+		"changed": false,
+		"missingPrimeToken": false,
+		"includes": ["s=review-rank", "rh=p_85%3A2470955011"]
+	}
+]
