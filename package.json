@@ -9,6 +9,7 @@
 		"test": "node --test"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.4.8"
+		"@biomejs/biome": "2.4.8",
+		"linkedom": "^0.18.12"
 	}
 }

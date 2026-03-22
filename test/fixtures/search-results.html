@@ -1,0 +1,86 @@
+<!-- Anonymized Amazon search results page snapshot for DOM testing -->
+<div class="s-main-slot s-result-list">
+
+  <!-- Card 1: High-rated organic product -->
+  <div data-component-type="s-search-result" data-asin="B000TEST01">
+    <div data-cy="title-recipe">
+      <h2><a href="/dp/B000TEST01"><span>Samsung Galaxy Buds Pro</span></a></h2>
+    </div>
+    <div data-cy="reviews-block">
+      <a href="/product-reviews/B000TEST01#customerReviews">
+        <span aria-hidden="true">4.5 out of 5 stars</span>
+        <span class="s-underline-text">12,345</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Card 2: Low-rated organic product (should be hidden by minimumRatings) -->
+  <div data-component-type="s-search-result" data-asin="B000TEST02">
+    <div data-cy="title-recipe">
+      <h2><a href="/dp/B000TEST02"><span>NoName Cheap Earbuds</span></a></h2>
+    </div>
+    <div data-cy="reviews-block">
+      <a href="/product-reviews/B000TEST02#customerReviews">
+        <span aria-hidden="true">3.2 out of 5 stars</span>
+        <span class="s-underline-text">42</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Card 3: Sponsored product -->
+  <div data-component-type="sp-sponsored-result">
+    <div data-component-type="s-search-result" data-asin="B000TEST03">
+      <div data-cy="title-recipe">
+        <h2><a href="/dp/B000TEST03"><span>Apple AirPods Max</span></a></h2>
+      </div>
+      <div class="puis-sponsored-label-text">Sponsored</div>
+      <div data-cy="reviews-block">
+        <a href="/product-reviews/B000TEST03#customerReviews">
+          <span class="s-underline-text">8,901</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 4: Product with data-ad-feedback (sponsored signal) -->
+  <div data-component-type="s-search-result" data-asin="B000TEST04" data-ad-feedback="some-ad-data">
+    <div data-cy="title-recipe">
+      <h2><a href="/dp/B000TEST04"><span>Sony WH-1000XM5</span></a></h2>
+    </div>
+    <div data-cy="reviews-block">
+      <a href="/product-reviews/B000TEST04#customerReviews">
+        <span class="s-underline-text">5,678</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Card 5: Product with no reviews at all -->
+  <div data-component-type="s-search-result" data-asin="B000TEST05">
+    <div data-cy="title-recipe">
+      <h2><a href="/dp/B000TEST05"><span>Bose QuietComfort Ultra</span></a></h2>
+    </div>
+  </div>
+
+  <!-- Card 6: Product with sponsored link pattern -->
+  <div data-component-type="s-search-result" data-asin="B000TEST06">
+    <div data-cy="title-recipe">
+      <h2><a href="/dp/B000TEST06"><span>JBL Tune Flex</span></a></h2>
+    </div>
+    <a href="https://aax-us-east.amazon.com/x/c/some-tracking-id">Click</a>
+    <div data-cy="reviews-block">
+      <a href="/product-reviews/B000TEST06#customerReviews">
+        <span class="s-underline-text">3,456</span>
+      </a>
+    </div>
+  </div>
+
+</div>
+
+<!-- Standalone sponsored module outside results -->
+<div data-component-type="s-impression-logger">
+  <div class="sg-col-inner">
+    <div data-ad-feedback="standalone-ad" data-ad-feedback-label-id="sp-label">
+      <span>Sponsored Ad Banner</span>
+    </div>
+  </div>
+</div>

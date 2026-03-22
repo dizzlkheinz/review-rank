@@ -97,8 +97,8 @@
 				.normalize("NFKD")
 				.replace(/[\u0300-\u036f]/g, "")
 				.replace(/&/g, " and ")
-				.replace(/['’]/g, "")
-				.replace(/[^a-zA-Z0-9]+/g, " ")
+				.replace(/[‘’]/g, "")
+				.replace(/[^\p{L}\p{N}]+/gu, " ")
 				.trim()
 				.toLowerCase();
 		}

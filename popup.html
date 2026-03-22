@@ -20,31 +20,31 @@
         <label class="toggle" for="enabled">
           <span class="toggle-copy">
             <span class="label">Extension enabled</span>
-            <span class="hint">Changes apply immediately. Turning this on may redirect the current Amazon search page once.</span>
+            <span class="hint" id="enabledHint">Changes apply immediately. Turning this on may redirect the current Amazon search page once.</span>
           </span>
-          <input id="enabled" name="enabled" type="checkbox">
+          <input id="enabled" name="enabled" type="checkbox" aria-describedby="enabledHint">
         </label>
 
         <label class="field" for="minimumRatings">
           <span class="label">Minimum review count</span>
-          <input id="minimumRatings" name="minimumRatings" type="number" min="0" max="1000000" step="1" inputmode="numeric">
-          <span class="hint">Products below this threshold are hidden after Amazon loads Prime results sorted by review rank.</span>
+          <input id="minimumRatings" name="minimumRatings" type="number" min="0" max="1000000" step="1" inputmode="numeric" aria-describedby="minimumRatingsHint">
+          <span class="hint" id="minimumRatingsHint">Products below this threshold are hidden after Amazon loads Prime results sorted by review rank.</span>
         </label>
 
         <label class="toggle" for="hideSponsoredResults">
           <span class="toggle-copy">
             <span class="label">Hide sponsored results</span>
-            <span class="hint">Block sponsored posts in Amazon search results without relying on any GPL implementation.</span>
+            <span class="hint" id="hideSponsoredHint">Block sponsored posts in Amazon search results without relying on any GPL implementation.</span>
           </span>
-          <input id="hideSponsoredResults" name="hideSponsoredResults" type="checkbox">
+          <input id="hideSponsoredResults" name="hideSponsoredResults" type="checkbox" aria-describedby="hideSponsoredHint">
         </label>
 
         <label class="toggle" for="useBrandWhitelist">
           <span class="toggle-copy">
             <span class="label">Use brand whitelist</span>
-            <span class="hint">Hide products whose visible title does not match the locally cached AmazonBrandFilterList allowlist.</span>
+            <span class="hint" id="brandWhitelistHint">Hide products whose visible title does not match the locally cached AmazonBrandFilterList allowlist.</span>
           </span>
-          <input id="useBrandWhitelist" name="useBrandWhitelist" type="checkbox">
+          <input id="useBrandWhitelist" name="useBrandWhitelist" type="checkbox" aria-describedby="brandWhitelistHint">
         </label>
       </form>
 
@@ -53,7 +53,7 @@
           <h2 id="pageStatusHeading">Current Page</h2>
           <p class="caption">Live status from the active Amazon tab.</p>
         </div>
-        <p class="status-copy" id="pageStatus">Open an Amazon search results page to inspect filtering status.</p>
+        <p class="status-copy" id="pageStatus" aria-live="polite">Open an Amazon search results page to inspect filtering status.</p>
       </section>
 
       <section class="card" aria-labelledby="whitelistHeading">
@@ -82,7 +82,7 @@
             <dd id="whitelistSyncStatus">-</dd>
           </div>
         </dl>
-        <p class="status-copy" id="whitelistError"></p>
+        <p class="status-copy" id="whitelistError" aria-live="polite"></p>
       </section>
 
       <p class="credit">

@@ -79,16 +79,54 @@ async function ensureBundledWhitelistFallback() {
 	return writeBundledWhitelist();
 }
 
+const WHITELIST_FETCH_TIMEOUT_MS = 30_000;
+const WHITELIST_MAX_SIZE_BYTES = 1_048_576;
+
 async function fetchRemoteBrandWhitelist() {
-	const response = await fetch(BRAND_WHITELIST_URL, {
-		cache: "no-store",
-	});
+	const controller = new AbortController();
+	const timeoutId = setTimeout(
+		() => controller.abort(),
+		WHITELIST_FETCH_TIMEOUT_MS,
+	);
 
-	if (!response.ok) {
-		throw new Error(`Whitelist fetch failed with status ${response.status}.`);
+	try {
+		const response = await fetch(BRAND_WHITELIST_URL, {
+			cache: "no-store",
+			signal: controller.signal,
+		});
+
+		if (!response.ok) {
+			throw new Error(`Whitelist fetch failed with status ${response.status}.`);
+		}
+
+		const contentLength = Number(response.headers.get("content-length") || 0);
+
+		if (contentLength > WHITELIST_MAX_SIZE_BYTES) {
+			throw new Error(
+				`Whitelist response too large: ${contentLength} bytes (max ${WHITELIST_MAX_SIZE_BYTES}).`,
+			);
+		}
+
+		const text = await response.text();
+
+		if (text.length > WHITELIST_MAX_SIZE_BYTES) {
+			throw new Error(
+				`Whitelist body too large: ${text.length} characters (max ${WHITELIST_MAX_SIZE_BYTES}).`,
+			);
+		}
+
+		const brands = parseBrandWhitelist(text);
+
+		if (brands.length > 0 && brands.length < 5) {
+			console.warn(
+				`Prime Rank Filter: whitelist suspiciously small (${brands.length} entries).`,
+			);
+		}
+
+		return brands;
+	} finally {
+		clearTimeout(timeoutId);
 	}
-
-	return parseBrandWhitelist(await response.text());
 }
 
 async function syncBrandWhitelist(options = {}) {
@@ -170,20 +208,48 @@ async function syncBrandWhitelist(options = {}) {
 	return activeSyncPromise;
 }
 
+async function recoverStaleSyncStatus() {
+	const state = await getStoredWhitelistState();
+
+	if (state.brandWhitelistSyncStatus === "syncing") {
+		await extensionApi.storage.local.set({
+			brandWhitelistSyncStatus: "error",
+			brandWhitelistLastError: "Sync interrupted by service worker restart.",
+		});
+	}
+}
+
+async function isBrandWhitelistEnabled() {
+	const stored = await extensionApi.storage.local.get({
+		useBrandWhitelist: false,
+	});
+	return stored.useBrandWhitelist === true;
+}
+
 async function initWhitelist(options = {}) {
+	await recoverStaleSyncStatus();
 	await ensureBundledWhitelistFallback();
+
+	if (!options.force && !(await isBrandWhitelistEnabled())) {
+		return buildWhitelistStatus(await getStoredWhitelistState());
+	}
+
 	return syncBrandWhitelist(options);
 }
 
-function ensureRefreshAlarm() {
+async function ensureRefreshAlarm() {
 	if (!extensionApi.alarms?.create) {
 		return;
 	}
 
-	extensionApi.alarms.create(BRAND_WHITELIST_ALARM, {
-		delayInMinutes: 24 * 60,
-		periodInMinutes: 24 * 60,
-	});
+	if (await isBrandWhitelistEnabled()) {
+		extensionApi.alarms.create(BRAND_WHITELIST_ALARM, {
+			delayInMinutes: 24 * 60,
+			periodInMinutes: 24 * 60,
+		});
+	} else if (extensionApi.alarms?.clear) {
+		extensionApi.alarms.clear(BRAND_WHITELIST_ALARM);
+	}
 }
 
 function getBadgeApi() {
@@ -263,13 +329,13 @@ function registerRuntimeHandlers() {
 
 extensionApi.runtime.onInstalled.addListener(() => {
 	void initWhitelist({ force: true });
-	ensureRefreshAlarm();
+	void ensureRefreshAlarm();
 });
 
 if (extensionApi.runtime.onStartup?.addListener) {
 	extensionApi.runtime.onStartup.addListener(() => {
 		void initWhitelist();
-		ensureRefreshAlarm();
+		void ensureRefreshAlarm();
 	});
 }
 
@@ -283,6 +349,37 @@ if (extensionApi.alarms?.onAlarm?.addListener) {
 	});
 }
 
+if (extensionApi.webNavigation?.onHistoryStateUpdated?.addListener) {
+	extensionApi.webNavigation.onHistoryStateUpdated.addListener(
+		(details) => {
+			if (details.frameId !== 0) {
+				return;
+			}
+
+			extensionApi.tabs
+				.sendMessage(details.tabId, {
+					type: "prime-rank-filter:navigation-changed",
+				})
+				.catch(() => {});
+		},
+		{
+			url: [{ hostContains: ".amazon." }],
+		},
+	);
+}
+
+extensionApi.storage.onChanged.addListener((changes, areaName) => {
+	if (areaName !== "local" || !("useBrandWhitelist" in changes)) {
+		return;
+	}
+
+	void ensureRefreshAlarm();
+
+	if (changes.useBrandWhitelist.newValue === true) {
+		void syncBrandWhitelist();
+	}
+});
+
 registerRuntimeHandlers();
 void initWhitelist();
-ensureRefreshAlarm();
+void ensureRefreshAlarm();

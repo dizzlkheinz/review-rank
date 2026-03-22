@@ -108,7 +108,6 @@ const SPONSORED_HIDE_TARGET_SELECTOR = [
 	"[data-asin][data-avar]",
 	"div[data-asin]",
 ].join(", ");
-const NAVIGATION_CHECK_INTERVAL_MS = 1500;
 const SPONSORED_LINK_PATTERNS = [
 	/\/\/aax-[^/]*amazon\.[^/]+\/x\/c\//i,
 	/\/sspa\/click/i,
@@ -129,7 +128,6 @@ const STATE = {
 	observedContainer: null,
 	resultsObserver: null,
 	locationHref: window.location.href,
-	navigationPollId: 0,
 	primeTokenHref: "",
 	primeTokenValue: "",
 	pageStatus: createDefaultPageStatus(),
@@ -265,7 +263,22 @@ function getUniqueCards(cards) {
 	return Array.from(new Set(cards.filter(Boolean)));
 }
 
+const SEARCH_PATH_PATTERN = /\/s[/?]/;
+
+function isSearchPageUrl(href = window.location.href) {
+	try {
+		const url = new URL(href);
+		return SEARCH_PATH_PATTERN.test(url.pathname + url.search.slice(0, 1));
+	} catch {
+		return false;
+	}
+}
+
 function isFilterableResultsPage(container = findResultsContainer()) {
+	if (!isSearchPageUrl()) {
+		return false;
+	}
+
 	return Boolean(container && getSearchResultCards(container).length > 0);
 }
 
@@ -317,20 +330,22 @@ function resolvePrimeToken() {
 		}
 	}
 
-	let scannedCharacters = 0;
+	if (scoresByToken.size === 0) {
+		let scannedCharacters = 0;
 
-	for (const script of document.querySelectorAll("script:not([src])")) {
-		const scriptText = script.textContent || "";
+		for (const script of document.querySelectorAll("script:not([src])")) {
+			const scriptText = script.textContent || "";
 
-		if (!scriptText) {
-			continue;
-		}
+			if (!scriptText) {
+				continue;
+			}
 
-		scannedCharacters += scriptText.length;
-		addScoredPrimeTokens(scoresByToken, scriptText, 12);
+			scannedCharacters += scriptText.length;
+			addScoredPrimeTokens(scoresByToken, scriptText, 12);
 
-		if (scannedCharacters >= 350000) {
-			break;
+			if (scannedCharacters >= 350000) {
+				break;
+			}
 		}
 	}
 
@@ -515,9 +530,14 @@ function evaluateCard(card) {
 	const sponsored = STATE.settings.hideSponsoredResults
 		? isSponsoredCard(card)
 		: false;
-	const matchedBrand = STATE.settings.useBrandWhitelist
-		? findWhitelistedBrand(card)
-		: "";
+	const brandIndex = ensureBrandIndex();
+	const matchedBrand =
+		STATE.settings.useBrandWhitelist && brandIndex
+			? matchWhitelistedBrand(
+					getTextCandidates(card, BRAND_TEXT_SELECTORS),
+					brandIndex,
+				)
+			: "";
 	const hiddenReasons = [];
 
 	if (STATE.settings.hideSponsoredResults && sponsored) {
@@ -528,7 +548,7 @@ function evaluateCard(card) {
 		hiddenReasons.push("low-reviews");
 	}
 
-	if (STATE.settings.useBrandWhitelist && !matchedBrand) {
+	if (STATE.settings.useBrandWhitelist && brandIndex && !matchedBrand) {
 		hiddenReasons.push("brand");
 	}
 
@@ -544,8 +564,10 @@ function evaluateCard(card) {
 function applyEvaluation(card, evaluation) {
 	if (evaluation.keep) {
 		card.style.removeProperty("display");
+		card.removeAttribute("aria-hidden");
 	} else {
 		card.style.setProperty("display", "none", "important");
+		card.setAttribute("aria-hidden", "true");
 	}
 
 	card.dataset.primeRankFilter = evaluation.keep ? "visible" : "hidden";
@@ -570,6 +592,7 @@ function applyProductFiltersToCards(cards) {
 
 function clearCardState(card) {
 	card.style.removeProperty("display");
+	card.removeAttribute("aria-hidden");
 	delete card.dataset.primeRankFilter;
 	delete card.dataset.primeRankHiddenReasons;
 	delete card.dataset.primeRankReviewCount;
@@ -789,6 +812,24 @@ function ensureResultsObserver(container) {
 		let sawRemoval = false;
 
 		for (const mutation of mutations) {
+			if (mutation.type === "attributes" || mutation.type === "characterData") {
+				const target =
+					mutation.type === "characterData"
+						? mutation.target.parentElement
+						: mutation.target;
+
+				if (target instanceof Element) {
+					const owningCard = target.closest(RESULT_CARD_SELECTOR);
+
+					if (owningCard) {
+						cache.sponsored.delete(owningCard);
+						changedCards.add(owningCard);
+					}
+				}
+
+				continue;
+			}
+
 			if (mutation.type !== "childList") {
 				continue;
 			}
@@ -850,6 +891,18 @@ function ensureResultsObserver(container) {
 	STATE.resultsObserver.observe(container, {
 		childList: true,
 		subtree: true,
+		attributes: true,
+		attributeFilter: [
+			"data-ad-feedback",
+			"data-ad-details",
+			"data-ad-id",
+			"data-component-type",
+			"data-cel-widget",
+			"data-is-sponsored-label-active",
+			"data-ad-feedback-label-id",
+			"data-ad-feedback-payload",
+		],
+		characterData: true,
 	});
 }
 
@@ -873,32 +926,18 @@ function handleNavigationChange() {
 }
 
 function observeNavigationChanges() {
-	const wrapHistoryMethod = (methodName) => {
-		const originalMethod = history[methodName];
-
-		if (typeof originalMethod !== "function") {
-			return;
-		}
-
-		history[methodName] = function wrappedHistoryMethod(...args) {
-			const result = originalMethod.apply(this, args);
-			queueMicrotask(handleNavigationChange);
-			return result;
-		};
-	};
-
-	wrapHistoryMethod("pushState");
-	wrapHistoryMethod("replaceState");
-
 	window.addEventListener("popstate", handleNavigationChange);
 	window.addEventListener("hashchange", handleNavigationChange);
 	window.addEventListener("pageshow", handleNavigationChange);
 	window.addEventListener("load", handleNavigationChange, { once: true });
 
-	STATE.navigationPollId = window.setInterval(
-		handleNavigationChange,
-		NAVIGATION_CHECK_INTERVAL_MS,
-	);
+	extensionApi.runtime.onMessage.addListener((message) => {
+		if (message?.type === "prime-rank-filter:navigation-changed") {
+			queueMicrotask(handleNavigationChange);
+		}
+
+		return undefined;
+	});
 }
 
 function observeSettingsChanges() {
@@ -987,6 +1026,7 @@ async function applyFilters() {
 				enabled: true,
 				supportedPage: false,
 			});
+			notifyBadgeCount();
 			disconnectResultsObserver();
 			return;
 		}
