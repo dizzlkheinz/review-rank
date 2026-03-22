@@ -52,28 +52,26 @@ const PRIME_TOKEN_ATTRIBUTE_SELECTOR = [
 	"[data-a-modal*='p_85']",
 	"input[value*='p_85']",
 ].join(", ");
+const SPONSORED_LABEL_SELECTORS = [
+	".puis-sponsored-label-text",
+	".s-sponsored-label-text",
+	".puis-label-popover",
+	".s-label-popover",
+	".s-label-popover-hover",
+];
+const SPONSORED_DATA_SELECTORS = ["[data-ad-feedback]", "[data-ad-details]"];
 const SPONSORED_STRUCTURAL_SELECTOR = [
 	"[data-component-type='sp-sponsored-result']",
 	"[data-cel-widget^='sp_']",
 	"[data-cel-widget*='sp-sponsored']",
-	"[data-ad-feedback]",
-	"[data-ad-details]",
+	...SPONSORED_DATA_SELECTORS,
 	"[data-ad-id]",
 	"[id^='sp_']",
-	".puis-sponsored-label-text",
-	".s-sponsored-label-text",
-	".puis-label-popover",
-	".s-label-popover",
-	".s-label-popover-hover",
+	...SPONSORED_LABEL_SELECTORS,
 ].join(", ");
 const SPONSORED_TEXT_SELECTORS = [
-	".puis-sponsored-label-text",
-	".s-sponsored-label-text",
-	".puis-label-popover",
-	".s-label-popover",
-	".s-label-popover-hover",
-	"[data-ad-feedback]",
-	"[data-ad-details]",
+	...SPONSORED_LABEL_SELECTORS,
+	...SPONSORED_DATA_SELECTORS,
 ].join(", ");
 const SPONSORED_SIGNAL_SELECTOR = [
 	"[data-ad-feedback-label-id]",
@@ -117,6 +115,8 @@ const SPONSORED_LINK_PATTERNS = [
 	/[?&]hsa_cr_id=/i,
 	/[?&]ref_=sbx_/i,
 ];
+
+const cache = { sponsored: new WeakMap() };
 
 const STATE = {
 	settings: { ...DEFAULT_SETTINGS },
@@ -457,6 +457,18 @@ function scopeContainsSponsoredLink(scope) {
 }
 
 function isSponsoredCard(card) {
+	const cached = cache.sponsored.get(card);
+
+	if (cached !== undefined) {
+		return cached;
+	}
+
+	const result = isSponsoredCardUncached(card);
+	cache.sponsored.set(card, result);
+	return result;
+}
+
+function isSponsoredCardUncached(card) {
 	for (const scope of getSponsoredDetectionScopes(card)) {
 		if (
 			scope.matches?.(SPONSORED_STRUCTURAL_SELECTOR) ||
@@ -633,6 +645,8 @@ function resetProductFilters() {
 		sortStatus: "disabled",
 		...summarizeResults(container),
 	});
+
+	notifyBadgeCount();
 }
 
 function summarizeResults(container = findResultsContainer()) {
@@ -682,6 +696,18 @@ function summarizeResults(container = findResultsContainer()) {
 	return summary;
 }
 
+function notifyBadgeCount() {
+	extensionApi.runtime
+		.sendMessage({
+			type: "prime-rank-filter:update-badge",
+			hiddenCount:
+				STATE.pageStatus.hiddenCount + STATE.pageStatus.hiddenSponsoredModules,
+			enabled: STATE.settings.enabled,
+			supportedPage: STATE.pageStatus.supportedPage,
+		})
+		.catch(() => {});
+}
+
 function refreshPageSummary(container = findResultsContainer()) {
 	const whitelistCount = STATE.brandWhitelist.length;
 
@@ -695,6 +721,8 @@ function refreshPageSummary(container = findResultsContainer()) {
 		whitelistCount,
 		...summarizeResults(container),
 	});
+
+	notifyBadgeCount();
 }
 
 function scheduleApply(options = {}) {
@@ -773,6 +801,7 @@ function ensureResultsObserver(container) {
 				const owningCard = mutation.target.closest(RESULT_CARD_SELECTOR);
 
 				if (owningCard) {
+					cache.sponsored.delete(owningCard);
 					changedCards.add(owningCard);
 				}
 			}
@@ -793,6 +822,7 @@ function ensureResultsObserver(container) {
 				}
 
 				for (const card of getSearchResultCards(node)) {
+					cache.sponsored.delete(card);
 					changedCards.add(card);
 				}
 			}
@@ -832,6 +862,7 @@ function handleNavigationChange() {
 	}
 
 	STATE.locationHref = window.location.href;
+	cache.sponsored = new WeakMap();
 	resetPrimeTokenCache();
 
 	if (currentContainer !== STATE.observedContainer) {
@@ -900,6 +931,10 @@ function observeSettingsChanges() {
 		}
 
 		STATE.settings = sanitizeSettings(nextSettings);
+
+		if ("hideSponsoredResults" in changes) {
+			cache.sponsored = new WeakMap();
+		}
 
 		if (!STATE.settings.useBrandWhitelist) {
 			STATE.brandIndex = null;

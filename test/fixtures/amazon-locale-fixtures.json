@@ -69,6 +69,36 @@
 			"expected": true
 		},
 		{
+			"market": "amazon.ae",
+			"text": "ممول",
+			"expected": true
+		},
+		{
+			"market": "amazon.sa",
+			"text": "إعلان ممول",
+			"expected": true
+		},
+		{
+			"market": "amazon.com.tr",
+			"text": "Sponsorlu",
+			"expected": true
+		},
+		{
+			"market": "amazon.cn",
+			"text": "赞助",
+			"expected": true
+		},
+		{
+			"market": "amazon.cn",
+			"text": "广告",
+			"expected": true
+		},
+		{
+			"market": "amazon.kr",
+			"text": "스폰서",
+			"expected": true
+		},
+		{
 			"market": "amazon.com",
 			"text": "Top Brand",
 			"expected": false

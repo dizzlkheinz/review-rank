@@ -170,6 +170,11 @@ async function syncBrandWhitelist(options = {}) {
 	return activeSyncPromise;
 }
 
+async function initWhitelist(options = {}) {
+	await ensureBundledWhitelistFallback();
+	return syncBrandWhitelist(options);
+}
+
 function ensureRefreshAlarm() {
 	if (!extensionApi.alarms?.create) {
 		return;
@@ -181,9 +186,45 @@ function ensureRefreshAlarm() {
 	});
 }
 
+function getBadgeApi() {
+	return extensionApi.action || extensionApi.browserAction;
+}
+
+function updateBadge(message, sender) {
+	const badgeApi = getBadgeApi();
+
+	if (!badgeApi) {
+		return;
+	}
+
+	const tabId = sender?.tab?.id;
+	const target = tabId ? { tabId } : {};
+
+	if (!message.enabled || !message.supportedPage) {
+		badgeApi.setBadgeText({ text: "", ...target });
+		return;
+	}
+
+	if (message.hiddenCount > 0) {
+		badgeApi.setBadgeText({
+			text: String(message.hiddenCount),
+			...target,
+		});
+		badgeApi.setBadgeBackgroundColor({ color: "#c45500", ...target });
+	} else {
+		badgeApi.setBadgeText({ text: "\u2713", ...target });
+		badgeApi.setBadgeBackgroundColor({ color: "#2e7d32", ...target });
+	}
+}
+
 function registerRuntimeHandlers() {
 	extensionApi.runtime.onMessage.addListener(
 		(message, _sender, sendResponse) => {
+			if (message?.type === "prime-rank-filter:update-badge") {
+				updateBadge(message, _sender);
+				return undefined;
+			}
+
 			if (
 				message?.type !== "prime-rank-filter:get-whitelist-status" &&
 				message?.type !== "prime-rank-filter:refresh-brand-whitelist"
@@ -221,15 +262,13 @@ function registerRuntimeHandlers() {
 }
 
 extensionApi.runtime.onInstalled.addListener(() => {
-	void ensureBundledWhitelistFallback();
-	void syncBrandWhitelist({ force: true });
+	void initWhitelist({ force: true });
 	ensureRefreshAlarm();
 });
 
 if (extensionApi.runtime.onStartup?.addListener) {
 	extensionApi.runtime.onStartup.addListener(() => {
-		void ensureBundledWhitelistFallback();
-		void syncBrandWhitelist();
+		void initWhitelist();
 		ensureRefreshAlarm();
 	});
 }
@@ -245,6 +284,5 @@ if (extensionApi.alarms?.onAlarm?.addListener) {
 }
 
 registerRuntimeHandlers();
-void ensureBundledWhitelistFallback();
-void syncBrandWhitelist();
+void initWhitelist();
 ensureRefreshAlarm();

@@ -213,3 +213,36 @@ input[type="checkbox"]:focus-visible,
 .credit a {
 	color: var(--accent-strong);
 }
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		color-scheme: dark;
+		--panel-bg: linear-gradient(180deg, #1a1408 0%, #0f0d09 100%);
+		--panel-border: #3d2e14;
+		--accent: #e8a033;
+		--accent-strong: #f0b95a;
+		--ink: #e8dcc8;
+		--muted: #a89070;
+		--field-bg: rgba(30, 24, 14, 0.88);
+		--field-border: rgba(200, 150, 50, 0.2);
+		--field-focus: rgba(232, 160, 51, 0.3);
+	}
+
+	body {
+		background:
+			radial-gradient(
+				circle at top right,
+				rgba(180, 120, 20, 0.15),
+				transparent 32%
+			),
+			linear-gradient(180deg, #1a1408 0%, #0f0d09 100%);
+	}
+
+	input[type="number"] {
+		background: #1a1408;
+	}
+
+	.refresh-button {
+		background: #1a1408;
+	}
+}

@@ -32,7 +32,7 @@
 		const COUNT_KEYWORD_PATTERN =
 			/\b(ratings?|reviews?|bewertung(?:en)?|rezension(?:en)?|evaluations?|avis|calificaciones?|opiniones|recensioni|recensies|avaliac(?:ao|oes)|ratings)\b/i;
 		const SPONSORED_TEXT_PATTERN =
-			/\b(sponsored|gesponsert|sponsorise|sponsorisé|patrocinad[oa]s?|sponsorizzat[oa]s?|gesponsord|sponsorowane|sponsrad|sponsret|sponsad)\b/i;
+			/\b(sponsored|gesponsert|sponsorise|sponsorisé|patrocinad[oa]s?|sponsorizzat[oa]s?|gesponsord|sponsorowane|sponsrad|sponsret|sponsad|sponsorlu)\b/i;
 
 		function normalizeMinimumRatings(value) {
 			const numericValue = Number.parseInt(String(value ?? ""), 10);
@@ -334,7 +334,13 @@
 			}
 
 			return (
-				SPONSORED_TEXT_PATTERN.test(rawText) || rawText.includes("スポンサー")
+				SPONSORED_TEXT_PATTERN.test(rawText) ||
+				rawText.includes("スポンサー") ||
+				rawText.includes("赞助") ||
+				rawText.includes("广告") ||
+				rawText.includes("스폰서") ||
+				rawText.includes("ممول") ||
+				rawText.includes("إعلان")
 			);
 		}
 
