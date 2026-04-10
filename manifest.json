@@ -10,7 +10,11 @@
 	"browser_specific_settings": {
 		"gecko": {
 			"id": "prime-rank-filter@primerank.dev",
-			"strict_min_version": "109.0"
+			"strict_min_version": "109.0",
+			"data_collection_permissions": {
+				"required": [],
+				"optional": []
+			}
 		}
 	},
 	"content_security_policy": {
