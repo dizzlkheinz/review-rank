@@ -4,7 +4,9 @@
 	"version": "0.1.0",
 	"description": "Force Prime-only Amazon search results, sort by review rank, block sponsored posts, hide low-review products, and optionally apply a brand allowlist.",
 	"permissions": ["storage", "alarms", "webNavigation"],
-	"host_permissions": ["https://raw.githubusercontent.com/*"],
+	"host_permissions": [
+		"https://raw.githubusercontent.com/chris-mosley/AmazonBrandFilterList/*"
+	],
 	"browser_specific_settings": {
 		"gecko": {
 			"id": "prime-rank-filter@primerank.dev",

@@ -1020,7 +1020,7 @@ function registerMessageHandlers() {
 				return undefined;
 			}
 
-			sendResponse({ ...STATE.pageStatus });
+			sendResponse({ ...STATE.pageStatus, enabled: STATE.settings.enabled });
 			return undefined;
 		},
 	);
