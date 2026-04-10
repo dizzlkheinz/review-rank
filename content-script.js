@@ -125,6 +125,7 @@ const STATE = {
 	isApplying: false,
 	rerunRequested: false,
 	rerunFullRefresh: false,
+	bootstrapObserver: null,
 	observedContainer: null,
 	resultsObserver: null,
 	locationHref: window.location.href,
@@ -292,6 +293,15 @@ function disconnectResultsObserver() {
 	STATE.observedContainer = null;
 }
 
+function disconnectBootstrapObserver() {
+	if (!STATE.bootstrapObserver) {
+		return;
+	}
+
+	STATE.bootstrapObserver.disconnect();
+	STATE.bootstrapObserver = null;
+}
+
 function resetPrimeTokenCache() {
 	STATE.primeTokenHref = "";
 	STATE.primeTokenValue = "";
@@ -419,19 +429,6 @@ function ensureBrandIndex() {
 function parseRatingsCount(card) {
 	return parseRatingsCountFromTexts(
 		getTextCandidates(card, RATING_TEXT_SELECTORS),
-	);
-}
-
-function findWhitelistedBrand(card) {
-	const brandIndex = ensureBrandIndex();
-
-	if (!brandIndex) {
-		return "";
-	}
-
-	return matchWhitelistedBrand(
-		getTextCandidates(card, BRAND_TEXT_SELECTORS),
-		brandIndex,
 	);
 }
 
@@ -804,6 +801,7 @@ function ensureResultsObserver(container) {
 		return;
 	}
 
+	disconnectBootstrapObserver();
 	disconnectResultsObserver();
 	STATE.observedContainer = container;
 	STATE.resultsObserver = new MutationObserver((mutations) => {
@@ -893,6 +891,9 @@ function ensureResultsObserver(container) {
 		subtree: true,
 		attributes: true,
 		attributeFilter: [
+			"alt",
+			"aria-label",
+			"class",
 			"data-ad-feedback",
 			"data-ad-details",
 			"data-ad-id",
@@ -901,8 +902,36 @@ function ensureResultsObserver(container) {
 			"data-is-sponsored-label-active",
 			"data-ad-feedback-label-id",
 			"data-ad-feedback-payload",
+			"href",
+			"id",
 		],
 		characterData: true,
+	});
+}
+
+function ensureBootstrapObserver() {
+	const root = document.body || document.documentElement;
+
+	if (
+		STATE.bootstrapObserver ||
+		!(root instanceof Element) ||
+		!isSearchPageUrl()
+	) {
+		return;
+	}
+
+	STATE.bootstrapObserver = new MutationObserver(() => {
+		if (!findResultsContainer()) {
+			return;
+		}
+
+		disconnectBootstrapObserver();
+		scheduleApply({ fullRefresh: true });
+	});
+
+	STATE.bootstrapObserver.observe(root, {
+		childList: true,
+		subtree: true,
 	});
 }
 
@@ -917,6 +946,7 @@ function handleNavigationChange() {
 	STATE.locationHref = window.location.href;
 	cache.sponsored = new WeakMap();
 	resetPrimeTokenCache();
+	disconnectBootstrapObserver();
 
 	if (currentContainer !== STATE.observedContainer) {
 		disconnectResultsObserver();
@@ -1008,6 +1038,7 @@ async function applyFilters() {
 
 	try {
 		if (!STATE.settings.enabled) {
+			disconnectBootstrapObserver();
 			resetProductFilters();
 			disconnectResultsObserver();
 			return;
@@ -1022,6 +1053,12 @@ async function applyFilters() {
 		const container = findResultsContainer();
 
 		if (!container) {
+			if (isSearchPageUrl()) {
+				ensureBootstrapObserver();
+			} else {
+				disconnectBootstrapObserver();
+			}
+
 			updatePageStatus({
 				enabled: true,
 				supportedPage: false,

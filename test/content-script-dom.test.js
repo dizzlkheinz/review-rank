@@ -16,29 +16,77 @@ const fixtureHtml = fs.readFileSync(
 	path.join(__dirname, "fixtures", "search-results.html"),
 	"utf-8",
 );
+const DEFAULT_TEST_URL =
+	"https://www.amazon.com/s?k=headphones&s=review-rank&rh=p_85%3A2470955011";
 
 function createTestEnv(options = {}) {
+	const { html = fixtureHtml, storage = {}, url = DEFAULT_TEST_URL } = options;
 	const { document, window } = parseHTML(
-		`<!DOCTYPE html><html><body>${fixtureHtml}</body></html>`,
+		`<!DOCTYPE html><html><body>${html}</body></html>`,
 	);
 
-	const storageData = {};
+	const storageData = { ...storage };
 	const sentMessages = [];
+	const runtimeMessageListeners = [];
+	const storageChangeListeners = [];
+	const replacedUrls = [];
 
 	const extensionApi = {
 		storage: {
 			local: {
 				get: async (defaults) => ({ ...defaults, ...storageData }),
-				set: async (values) => Object.assign(storageData, values),
+				set: async (values) => {
+					const changes = {};
+
+					for (const [key, value] of Object.entries(values)) {
+						if (storageData[key] === value) {
+							continue;
+						}
+
+						changes[key] = {
+							oldValue: storageData[key],
+							newValue: value,
+						};
+					}
+
+					Object.assign(storageData, values);
+
+					if (Object.keys(changes).length > 0) {
+						for (const listener of storageChangeListeners) {
+							listener(changes, "local");
+						}
+					}
+				},
 			},
-			onChanged: { addListener: () => {} },
+			onChanged: {
+				addListener: (listener) => {
+					storageChangeListeners.push(listener);
+				},
+			},
 		},
 		runtime: {
-			onMessage: { addListener: () => {} },
+			onMessage: {
+				addListener: (listener) => {
+					runtimeMessageListeners.push(listener);
+				},
+			},
 			sendMessage: (msg) => {
 				sentMessages.push(msg);
 				return Promise.resolve();
 			},
+		},
+	};
+
+	window.setTimeout = setTimeout;
+	window.clearTimeout = clearTimeout;
+	window.queueMicrotask = queueMicrotask;
+	window.console = console;
+	window.URL = URL;
+	window.location = {
+		href: url,
+		replace(nextUrl) {
+			replacedUrls.push(nextUrl);
+			this.href = nextUrl;
 		},
 	};
 
@@ -54,27 +102,71 @@ function createTestEnv(options = {}) {
 
 	const shared = sharedGlobal.PrimeRankShared;
 
-	return { document, window, shared, extensionApi, storageData, sentMessages };
+	return {
+		document,
+		window,
+		shared,
+		extensionApi,
+		storageData,
+		sentMessages,
+		runtimeMessageListeners,
+		replacedUrls,
+	};
 }
 
 // ---------------------------------------------------------------------------
-// Helper: run content-script functions in isolation using shared module
+// Helper: execute the shipped content script in the test DOM
 // ---------------------------------------------------------------------------
 
-function buildFilterEnv(settings = {}, brandWhitelist = []) {
-	const env = createTestEnv();
-	const { shared, document } = env;
-	const resolvedSettings = shared.sanitizeSettings(settings);
-	const normalizedWhitelist = shared.normalizeBrandWhitelist(brandWhitelist);
-	const brandIndex =
-		resolvedSettings.useBrandWhitelist && normalizedWhitelist.length
-			? shared.buildBrandIndex(normalizedWhitelist)
-			: null;
+function executeContentScript(env) {
+	const contentGlobal = {
+		browser: env.extensionApi,
+		PrimeRankShared: env.shared,
+	};
+	contentGlobal.globalThis = contentGlobal;
 
-	return { ...env, resolvedSettings, brandIndex };
+	const contentFn = new Function(
+		"globalThis",
+		"window",
+		"document",
+		"Element",
+		"MutationObserver",
+		"URL",
+		"queueMicrotask",
+		"console",
+		"setTimeout",
+		"clearTimeout",
+		contentSource,
+	);
+
+	contentFn(
+		contentGlobal,
+		env.window,
+		env.document,
+		env.window.Element,
+		env.window.MutationObserver,
+		URL,
+		queueMicrotask,
+		console,
+		setTimeout,
+		clearTimeout,
+	);
 }
 
-function getTextCandidates(document, root, selectors) {
+function waitFor(ms = 0) {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+
+async function runContentScript(options = {}) {
+	const env = createTestEnv(options);
+	executeContentScript(env);
+	await waitFor(220);
+	return env;
+}
+
+function getTextCandidates(_document, root, selectors) {
 	const seen = new Set();
 	const values = [];
 	const normalizedSelectors = Array.isArray(selectors)
@@ -449,4 +541,64 @@ test("matchesSponsoredLabelText detects Korean '스폰서'", () => {
 test("matchesSponsoredLabelText returns false for unrelated text", () => {
 	const { shared } = createTestEnv();
 	assert.equal(shared.matchesSponsoredLabelText("Just a product title"), false);
+});
+
+// ---------------------------------------------------------------------------
+// Integration tests: execute the real content script
+// ---------------------------------------------------------------------------
+
+test("content script applies filters when results load after init", async () => {
+	const env = await runContentScript({ html: "" });
+
+	assert.equal(env.document.querySelector("[data-asin]"), null);
+
+	env.document.body.innerHTML = fixtureHtml;
+	await waitFor(250);
+
+	const lateCard = env.document.querySelector("[data-asin='B000TEST02']");
+	assert.ok(lateCard, "late-loaded result card should exist");
+	assert.equal(
+		lateCard.dataset.primeRankFilter,
+		"hidden",
+		"late-loaded low-review card should be filtered",
+	);
+	assert.equal(lateCard.getAttribute("aria-hidden"), "true");
+});
+
+test("content script re-evaluates a card when a sponsored href is added", async () => {
+	const env = await runContentScript();
+	const card = env.document.querySelector("[data-asin='B000TEST01']");
+	const productLink = card.querySelector("h2 a");
+
+	assert.equal(card.dataset.primeRankFilter, "visible");
+
+	productLink.setAttribute(
+		"href",
+		"https://aax-us-east.amazon.com/x/c/some-tracking-id",
+	);
+	await waitFor(250);
+
+	assert.equal(
+		card.dataset.primeRankFilter,
+		"hidden",
+		"href mutation should trigger sponsored re-evaluation",
+	);
+	assert.ok(card.dataset.primeRankHiddenReasons.includes("sponsored"));
+});
+
+test("content script re-evaluates a card when aria-label becomes sponsored", async () => {
+	const env = await runContentScript();
+	const card = env.document.querySelector("[data-asin='B000TEST01']");
+
+	assert.equal(card.dataset.primeRankFilter, "visible");
+
+	card.setAttribute("aria-label", "Sponsored Ad");
+	await waitFor(250);
+
+	assert.equal(
+		card.dataset.primeRankFilter,
+		"hidden",
+		"aria-label mutation should trigger sponsored re-evaluation",
+	);
+	assert.ok(card.dataset.primeRankHiddenReasons.includes("sponsored"));
 });

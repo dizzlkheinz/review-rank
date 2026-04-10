@@ -181,6 +181,15 @@ test("brand with apostrophes matches correctly", () => {
 	);
 });
 
+test("brand matching treats straight and curly apostrophes as equivalent", () => {
+	const brandIndex = shared.buildBrandIndex(["L’Oréal Paris"]);
+
+	assert.equal(
+		shared.matchWhitelistedBrand(["L'Oreal Paris Mascara Volume"], brandIndex),
+		"L’Oréal Paris",
+	);
+});
+
 test("brand with accented characters matches via normalization", () => {
 	const brandIndex = shared.buildBrandIndex(["Nestlé"]);
 
