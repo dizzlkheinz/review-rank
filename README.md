@@ -3,7 +3,7 @@
 A Firefox extension that cleans up Amazon search results:
 
 - Sorts by review rank and enforces Prime-only results automatically
-- Blocks sponsored listings using independent DOM heuristics (no GPL code)
+- Blocks sponsored listings using independent DOM heuristics
 - Hides products below a configurable minimum review count
 - Optionally filters by brand using the [AmazonBrandFilterList](https://github.com/chris-mosley/AmazonBrandFilterList) allowlist
 
@@ -57,4 +57,3 @@ The test suite covers settings sanitization, locale-aware review count parsing (
 
 - Prime enforcement requires Amazon to expose a Prime facet token on the current search page. When unavailable, the popup reports this and the other filters still apply.
 - Brand matching is title/byline based — treat whitelist mode as conservative filtering rather than exact brand identification.
-- Sponsored blocking was written independently; no GPL code was used.
