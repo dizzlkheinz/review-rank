@@ -52,8 +52,3 @@ npm run format   # format with Biome
 ```
 
 The test suite covers settings sanitization, locale-aware review count parsing (`.com`, `.de`, `.fr`, `.co.jp`), brand matching, sponsored label recognition, URL rewriting, and whitelist refresh logic.
-
-## Notes
-
-- Prime enforcement requires Amazon to expose a Prime facet token on the current search page. When unavailable, the popup reports this and the other filters still apply.
-- Brand matching is title/byline based — treat whitelist mode as conservative filtering rather than exact brand identification.
