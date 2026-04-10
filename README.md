@@ -1,109 +1,60 @@
-# Prime Rank Filter
+# Review Rank
 
-Cross-browser Amazon search extension for Firefox and Chrome that:
+A Firefox extension that cleans up Amazon search results:
 
-- forces Amazon search results to `s=review-rank`
-- enforces Prime-only results when Amazon exposes a usable Prime facet token
-- blocks sponsored posts using independent DOM/text heuristics
-- hides listings below a configurable minimum ratings count
-- optionally hides listings whose visible brand does not match a refreshed allowlist from `chris-mosley/AmazonBrandFilterList`
-- reports current-page filtering status and whitelist health in the popup
-
-## Runtime Shape
-
-- Amazon page access stays limited to Amazon domains.
-- The only non-Amazon network access is the background refresh request to `raw.githubusercontent.com` for the brand whitelist.
-- The content script no longer ships the bundled whitelist into every Amazon tab.
-- Shared parsing and settings logic now lives in `prime-rank-shared.js`.
-
-## Files
-
-- `manifest.json`: MV3 manifest with Firefox and Chrome background configuration
-- `prime-rank-shared.js`: shared settings, parsing, URL rewrite, and whitelist helpers
-- `amazon-brand-whitelist.js`: bundled AmazonBrandFilterList snapshot
-- `background.js`: bundled fallback, GitHub refresh, popup status API, and alarm scheduling
-- `content-script.js`: Amazon search filtering, Prime token detection, and page-status reporting
-- `popup.html`: popup UI
-- `popup.css`: popup styling
-- `popup.js`: popup settings, whitelist refresh, and active-tab status logic
-- `icons/`: packaged toolbar icons
-- `test/`: Node fixtures and helper tests
+- Sorts by review rank and enforces Prime-only results automatically
+- Blocks sponsored listings using independent DOM heuristics (no GPL code)
+- Hides products below a configurable minimum review count
+- Optionally filters by brand using the [AmazonBrandFilterList](https://github.com/chris-mosley/AmazonBrandFilterList) allowlist
 
 ## Install
 
-### Firefox desktop
+### Firefox (temporary, for testing)
 
-1. Open `about:debugging#/runtime/this-firefox`.
-2. Click `Load Temporary Add-on...`.
-3. Select `manifest.json`.
+1. Open `about:debugging` in Firefox
+2. Click **This Firefox** → **Load Temporary Add-on...**
+3. Select `manifest.json` from this folder
 
 ### Firefox for Android
 
-1. Install/load the extension through Firefox’s extension tooling or collection flow.
-2. Open the extension from Firefox’s extensions/settings UI.
-3. The popup shows the active Amazon tab’s current filtering status.
+Load via Firefox's extension collection or developer tooling.
 
 ### Chrome / Chromium
 
-1. Open `chrome://extensions`.
-2. Enable `Developer mode`.
-3. Click `Load unpacked`.
-4. Select this folder.
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked** and select this folder
 
-## Popup
+## Popup Controls
 
-The popup controls:
+| Setting | Description |
+|---|---|
+| Extension enabled | Master on/off switch |
+| Minimum review count | Hide products below this threshold |
+| Hide sponsored results | Block sponsored listings |
+| Use brand whitelist | Hide products not matching the allowlist |
 
-- extension enabled state
-- minimum review threshold
-- sponsored-result blocking
-- brand-whitelist mode
-- manual whitelist refresh from GitHub
+The popup also shows a live summary of the active Amazon tab: visible/hidden counts by reason, Prime enforcement status, and whitelist health.
 
-It also shows:
+## Brand Whitelist
 
-- current Amazon tab summary
-- Prime enforcement status
-- hidden result counts by reason
-- whitelist source, size, refresh time, and last refresh error
+The bundled snapshot from [chris-mosley/AmazonBrandFilterList](https://github.com/chris-mosley/AmazonBrandFilterList) is available immediately on install. It refreshes from GitHub once per day and on demand via the **Refresh** button in the popup.
 
-## Testing
+The only external network request the extension makes is to `raw.githubusercontent.com/chris-mosley/AmazonBrandFilterList` for this refresh.
 
-Run:
+## Development
 
 ```bash
-npm run lint
-npm test
+npm run verify   # lint + test
+npm run lint     # lint only
+npm test         # test only
+npm run format   # format with Biome
 ```
 
-Or run both checks together:
-
-```bash
-npm run verify
-```
-
-The test suite covers:
-
-- shared settings sanitization
-- locale-aware review-count parsing for `.com`, `.de`, `.fr`, and `.co.jp`
-- allowlist brand matching
-- sponsored-label recognition
-- deterministic Amazon URL rewriting
-- whitelist parsing and refresh-age logic
-
-## Formatting
-
-Run:
-
-```bash
-npm run format
-```
-
-Biome is configured for the repo with tab indentation and ignores the bundled whitelist snapshot in `amazon-brand-whitelist.js`.
+The test suite covers settings sanitization, locale-aware review count parsing (`.com`, `.de`, `.fr`, `.co.jp`), brand matching, sponsored label recognition, URL rewriting, and whitelist refresh logic.
 
 ## Notes
 
-- Sponsored blocking was implemented independently; no GPL code was copied from Amazon Unsponsor.
-- Prime enforcement is deterministic when a Prime token can be extracted from the page or current URL. If Amazon does not expose a token on a given search surface, the popup will report that Prime enforcement is unavailable for that page while still applying the other filters.
-- Brand matching is still best-effort and title/byline based, so treat whitelist mode as conservative rather than perfect brand identification.
-- The bundled whitelist snapshot is available immediately and then refreshed from GitHub at startup, once per day, and on demand from the popup.
+- Prime enforcement requires Amazon to expose a Prime facet token on the current search page. When unavailable, the popup reports this and the other filters still apply.
+- Brand matching is title/byline based — treat whitelist mode as conservative filtering rather than exact brand identification.
+- Sponsored blocking was written independently; no GPL code was used.
