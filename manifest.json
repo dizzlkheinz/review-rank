@@ -17,7 +17,12 @@
 		"extension_pages": "script-src 'self'; object-src 'none'"
 	},
 	"background": {
-		"service_worker": "background.js"
+		"service_worker": "background.js",
+		"scripts": [
+			"prime-rank-shared.js",
+			"amazon-brand-whitelist.js",
+			"background.js"
+		]
 	},
 	"action": {
 		"default_title": "Prime Rank Filter",
