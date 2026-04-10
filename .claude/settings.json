@@ -1,0 +1,26 @@
+{
+	"hooks": {
+		"PostToolUse": [
+			{
+				"matcher": "Edit|Write",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "npx biome format --write \"${CLAUDE_TOOL_INPUT_FILE_PATH}\""
+					}
+				]
+			}
+		],
+		"PreToolUse": [
+			{
+				"matcher": "Edit|Write",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "node -e \"const f = process.env.CLAUDE_TOOL_INPUT_FILE_PATH || ''; if (f.endsWith('.zip')) { console.error('Blocked: do not edit ZIP artifacts'); process.exit(2); }\""
+					}
+				]
+			}
+		]
+	}
+}
