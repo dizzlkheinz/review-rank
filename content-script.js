@@ -1103,8 +1103,5 @@ async function init() {
 }
 
 init().catch((error) => {
-	console.error(
-		"Prime Rank Filter content script failed to initialize.",
-		error,
-	);
+	console.error("Review Rank content script failed to initialize.", error);
 });

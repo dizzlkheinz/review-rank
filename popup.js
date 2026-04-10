@@ -276,6 +276,6 @@ async function init() {
 }
 
 init().catch((error) => {
-	console.error("Prime Rank Filter popup failed to initialize.", error);
+	console.error("Review Rank popup failed to initialize.", error);
 	elements.status.textContent = "Unable to load extension settings.";
 });

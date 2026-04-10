@@ -2,7 +2,7 @@ if (typeof importScripts === "function") {
 	try {
 		importScripts("prime-rank-shared.js", "amazon-brand-whitelist.js");
 	} catch (error) {
-		console.error("Prime Rank Filter background imports failed.", error);
+		console.error("Review Rank background imports failed.", error);
 	}
 }
 
@@ -119,7 +119,7 @@ async function fetchRemoteBrandWhitelist() {
 
 		if (brands.length > 0 && brands.length < 5) {
 			console.warn(
-				`Prime Rank Filter: whitelist suspiciously small (${brands.length} entries).`,
+				`Review Rank: whitelist suspiciously small (${brands.length} entries).`,
 			);
 		}
 
@@ -183,7 +183,7 @@ async function syncBrandWhitelist(options = {}) {
 			await extensionApi.storage.local.set(nextState);
 			return buildWhitelistStatus(nextState);
 		} catch (error) {
-			console.error("Prime Rank Filter whitelist sync failed.", error);
+			console.error("Review Rank whitelist sync failed.", error);
 
 			if (!currentWhitelist.length) {
 				await writeBundledWhitelist({
