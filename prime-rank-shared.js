@@ -327,13 +327,16 @@
 		}
 
 		function matchesSponsoredLabelText(text) {
-			const rawText = String(text ?? "").trim();
+			let rawText = String(text ?? "").trim();
 
 			if (!rawText) {
 				return false;
 			}
 
-			return (
+			// Remove zero-width spaces, soft hyphens, and other control/non-printing chars
+			rawText = rawText.replace(/[\u200b-\u200d\ufeff\u00ad]/g, "");
+
+			if (
 				SPONSORED_TEXT_PATTERN.test(rawText) ||
 				rawText.includes("スポンサー") ||
 				rawText.includes("赞助") ||
@@ -341,7 +344,43 @@
 				rawText.includes("스폰서") ||
 				rawText.includes("ممول") ||
 				rawText.includes("إعلان")
-			);
+			) {
+				return true;
+			}
+
+			// Clean for fuzzy spacing/obfuscation (e.g. "S p o n s o r e d")
+			const cleaned = rawText
+				.toLowerCase()
+				.normalize("NFKD")
+				.replace(/[\u0300-\u036f]/g, "")
+				.replace(
+					/[^a-z0-9\u00c0-\u00ff\u0100-\u017f\u0400-\u04ff\u0600-\u06ff\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]/gu,
+					"",
+				);
+
+			const sponsoredFuzzyKeywords = [
+				"sponsored",
+				"gesponsert",
+				"sponsorise",
+				"patrocinado",
+				"patrocinada",
+				"sponsorizzato",
+				"sponsorizzata",
+				"gesponsord",
+				"sponsorowane",
+				"sponsrad",
+				"sponsret",
+				"sponsad",
+				"sponsorlu",
+			];
+
+			for (const kw of sponsoredFuzzyKeywords) {
+				if (cleaned.includes(kw)) {
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		return {

@@ -106,17 +106,20 @@ function renderPageStatus(pageStatus) {
 	if (!pageStatus) {
 		elements.pageStatus.textContent =
 			"Open an Amazon search results page to inspect filtering status.";
+		elements.pageStatus.dataset.status = "none";
 		return;
 	}
 
 	if (!pageStatus.enabled && pageStatus.supportedPage) {
 		elements.pageStatus.textContent = `Extension off on this Amazon results page. ${pageStatus.totalCount} results currently visible.`;
+		elements.pageStatus.dataset.status = "disabled";
 		return;
 	}
 
 	if (!pageStatus.supportedPage) {
 		elements.pageStatus.textContent =
 			"Open an Amazon search results page to inspect filtering status.";
+		elements.pageStatus.dataset.status = "unsupported";
 		return;
 	}
 
@@ -145,6 +148,9 @@ function renderPageStatus(pageStatus) {
 		pageStatus.primeStatus === "missing-token"
 			? "Prime filter unavailable on this page."
 			: "Prime filter enforced.";
+
+	elements.pageStatus.dataset.status =
+		pageStatus.primeStatus === "missing-token" ? "warning" : "active";
 
 	elements.pageStatus.textContent =
 		`${details.join(" · ")}. ${primeText} ` +

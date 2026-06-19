@@ -45,6 +45,35 @@ test("sponsored label matcher covers major locale variants", () => {
 	}
 });
 
+test("sponsored label matcher handles fuzzy obfuscated cases", () => {
+	const positiveCases = [
+		"S p o n s o r e d",
+		"G e s p o n s e r t",
+		"S\u200Bponsored",
+		"Ges\u200Cponsert",
+		"Sponsor\u00adisé",
+		"S  P  O  N  S  O  R  E  D",
+	];
+
+	const negativeCases = ["Sponsor shirt", "Top Brand", "Normal brand"];
+
+	for (const text of positiveCases) {
+		assert.equal(
+			shared.matchesSponsoredLabelText(text),
+			true,
+			`Failed positive: ${text}`,
+		);
+	}
+
+	for (const text of negativeCases) {
+		assert.equal(
+			shared.matchesSponsoredLabelText(text),
+			false,
+			`Failed negative: ${text}`,
+		);
+	}
+});
+
 test("buildCanonicalSearchUrl rewrites Amazon search urls deterministically", () => {
 	for (const fixture of urlCases) {
 		const result = shared.buildCanonicalSearchUrl(fixture.url, {

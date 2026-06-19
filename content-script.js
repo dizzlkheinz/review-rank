@@ -84,6 +84,7 @@ const SPONSORED_LINK_SELECTOR = [
 	"a[href*='hsa_cr_id=']",
 	"a[href*='ref_=sbx_']",
 	"a[href*='/sspa/click']",
+	"a[href*='/gp/slredirect/']",
 ].join(", ");
 const SPONSORED_MEDIA_SELECTOR = [
 	"img[alt^='Sponsored Ad']",
@@ -113,6 +114,7 @@ const SPONSORED_LINK_PATTERNS = [
 	/\/sspa\/click/i,
 	/[?&]hsa_cr_id=/i,
 	/[?&]ref_=sbx_/i,
+	/\/gp\/slredirect\//i,
 ];
 
 const cache = { sponsored: new WeakMap() };
@@ -1072,6 +1074,10 @@ async function applyFilters() {
 
 		if (shouldRunFullRefresh || !STATE.pageStatus.lastUpdatedAt) {
 			applyProductFiltersToCards(getSearchResultCards(container));
+		}
+
+		if (!STATE.settings.hideSponsoredResults) {
+			clearSponsoredModuleState();
 		}
 
 		applyStandaloneSponsoredBlocks(container);
