@@ -37,3 +37,24 @@ node --check content-script.js  # syntax check only
 
 Tests use Node's built-in `node:test` runner + `linkedom` for DOM simulation. No external test framework.
 Test files: `test/prime-rank-shared.test.js`, `test/content-script-dom.test.js`, `test/background-sync.test.js`
+
+## Publishing Updates
+
+1. **Bump Version**: Increment `"version"` in [manifest.json](file:///C:/Users/ksutk/projects/review-rank/manifest.json) and [package.json](file:///C:/Users/ksutk/projects/review-rank/package.json).
+2. **Package**: Run the PowerShell script to build the release ZIP:
+   ```powershell
+   $version = (Get-Content manifest.json | ConvertFrom-Json).version
+   Compress-Archive -Path manifest.json, background.js, content-script.js, prime-rank-shared.js, amazon-brand-whitelist.js, popup.html, popup.js, popup.css, icons -DestinationPath "review-rank-$version.zip" -Force
+   ```
+3. **Submit to Mozilla**:
+   - **Manual**: Upload the generated ZIP file to the [Mozilla Add-on Developer Hub](https://addons.mozilla.org/developers/).
+   - **CLI**: Authenticate using the keys in [.env](file:///C:/Users/ksutk/projects/review-rank/.env):
+     ```powershell
+     # Load keys from .env (PowerShell)
+     $env:AMO_JWT_ISSUER = (Select-String -Path .env -Pattern "^AMO_JWT_ISSUER=\`"(.*)\`"").Matches.Groups[1].Value
+     $env:AMO_JWT_SECRET = (Select-String -Path .env -Pattern "^AMO_JWT_SECRET=\`"(.*)\`"").Matches.Groups[1].Value
+     
+     # Submit
+     npx web-ext submit --api-key=$env:AMO_JWT_ISSUER --api-secret=$env:AMO_JWT_SECRET
+     ```
+
