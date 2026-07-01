@@ -19,6 +19,14 @@ const elements = {
 let currentSettings = { ...DEFAULT_SETTINGS };
 let refreshInFlight = false;
 
+const WHITELIST_STATUS_KEYS = [
+	"brandWhitelist",
+	"brandWhitelistFetchedAt",
+	"brandWhitelistSource",
+	"brandWhitelistLastError",
+	"brandWhitelistSyncStatus",
+];
+
 function areSettingsEqual(left, right) {
 	return Object.keys(DEFAULT_SETTINGS).every((key) => left[key] === right[key]);
 }
@@ -102,27 +110,26 @@ function renderWhitelistStatus(status) {
 		: "";
 }
 
-function renderPageStatus(pageStatus) {
-	if (!pageStatus) {
-		elements.pageStatus.textContent =
-			"Open an Amazon search results page to inspect filtering status.";
-		elements.pageStatus.dataset.status = "none";
-		return;
-	}
+function setPageStatus(text, status) {
+	elements.pageStatus.textContent = text;
+	elements.pageStatus.dataset.status = status;
+}
 
-	if (!pageStatus.enabled && pageStatus.supportedPage) {
-		elements.pageStatus.textContent = `Extension off on this Amazon results page. ${pageStatus.totalCount} results currently visible.`;
-		elements.pageStatus.dataset.status = "disabled";
-		return;
-	}
+function renderNoPageStatus(status) {
+	setPageStatus(
+		"Open an Amazon search results page to inspect filtering status.",
+		status,
+	);
+}
 
-	if (!pageStatus.supportedPage) {
-		elements.pageStatus.textContent =
-			"Open an Amazon search results page to inspect filtering status.";
-		elements.pageStatus.dataset.status = "unsupported";
-		return;
-	}
+function renderDisabledPageStatus(pageStatus) {
+	setPageStatus(
+		`Extension off on this Amazon results page. ${pageStatus.totalCount} results currently visible.`,
+		"disabled",
+	);
+}
 
+function getPageStatusDetails(pageStatus) {
 	const details = [
 		`${pageStatus.visibleCount} shown`,
 		`${pageStatus.hiddenCount} hidden`,
@@ -144,17 +151,45 @@ function renderPageStatus(pageStatus) {
 		details.push(`${pageStatus.hiddenByBrand} non-whitelist`);
 	}
 
-	const primeText =
-		pageStatus.primeStatus === "missing-token"
-			? "Prime filter unavailable on this page."
-			: "Prime filter enforced.";
+	return details;
+}
 
-	elements.pageStatus.dataset.status =
+function getPrimeStatusText(pageStatus) {
+	return pageStatus.primeStatus === "missing-token"
+		? "Prime filter unavailable on this page."
+		: "Prime filter enforced.";
+}
+
+function renderActivePageStatus(pageStatus) {
+	const details = getPageStatusDetails(pageStatus);
+	const primeText = getPrimeStatusText(pageStatus);
+	const status =
 		pageStatus.primeStatus === "missing-token" ? "warning" : "active";
 
-	elements.pageStatus.textContent =
+	setPageStatus(
 		`${details.join(" · ")}. ${primeText} ` +
-		`Threshold ${pageStatus.minimumRatings}.`;
+			`Threshold ${pageStatus.minimumRatings}.`,
+		status,
+	);
+}
+
+function renderPageStatus(pageStatus) {
+	if (!pageStatus) {
+		renderNoPageStatus("none");
+		return;
+	}
+
+	if (!pageStatus.enabled && pageStatus.supportedPage) {
+		renderDisabledPageStatus(pageStatus);
+		return;
+	}
+
+	if (!pageStatus.supportedPage) {
+		renderNoPageStatus("unsupported");
+		return;
+	}
+
+	renderActivePageStatus(pageStatus);
 }
 
 async function getActiveTabId() {
@@ -231,35 +266,46 @@ function observeStorageChanges() {
 			return;
 		}
 
-		let settingsChanged = false;
-		const nextSettings = { ...currentSettings };
-
-		for (const key of Object.keys(DEFAULT_SETTINGS)) {
-			if (!(key in changes)) {
-				continue;
-			}
-
-			nextSettings[key] = changes[key].newValue;
-			settingsChanged = true;
-		}
-
-		if (settingsChanged) {
-			currentSettings = sanitizeSettings(nextSettings);
-			renderSettings(currentSettings);
-			renderSettingsStatus(currentSettings, "Updated");
-			void loadPageStatus();
-		}
-
-		if (
-			"brandWhitelist" in changes ||
-			"brandWhitelistFetchedAt" in changes ||
-			"brandWhitelistSource" in changes ||
-			"brandWhitelistLastError" in changes ||
-			"brandWhitelistSyncStatus" in changes
-		) {
-			void loadWhitelistStatus();
-		}
+		handleLocalStorageChanges(changes);
 	});
+}
+
+function collectChangedSettings(changes) {
+	const nextSettings = { ...currentSettings };
+	let settingsChanged = false;
+
+	for (const key of Object.keys(DEFAULT_SETTINGS)) {
+		if (!(key in changes)) {
+			continue;
+		}
+
+		nextSettings[key] = changes[key].newValue;
+		settingsChanged = true;
+	}
+
+	return {
+		settingsChanged,
+		nextSettings,
+	};
+}
+
+function hasWhitelistStatusChange(changes) {
+	return WHITELIST_STATUS_KEYS.some((key) => key in changes);
+}
+
+function handleLocalStorageChanges(changes) {
+	const { settingsChanged, nextSettings } = collectChangedSettings(changes);
+
+	if (settingsChanged) {
+		currentSettings = sanitizeSettings(nextSettings);
+		renderSettings(currentSettings);
+		renderSettingsStatus(currentSettings, "Updated");
+		void loadPageStatus();
+	}
+
+	if (hasWhitelistStatusChange(changes)) {
+		void loadWhitelistStatus();
+	}
 }
 
 async function init() {

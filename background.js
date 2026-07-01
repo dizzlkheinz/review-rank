@@ -82,6 +82,38 @@ async function ensureBundledWhitelistFallback() {
 const WHITELIST_FETCH_TIMEOUT_MS = 30_000;
 const WHITELIST_MAX_SIZE_BYTES = 1_048_576;
 
+function assertWhitelistResponseOk(response) {
+	if (!response.ok) {
+		throw new Error(`Whitelist fetch failed with status ${response.status}.`);
+	}
+}
+
+function assertWhitelistResponseSize(response) {
+	const contentLength = Number(response.headers.get("content-length") || 0);
+
+	if (contentLength > WHITELIST_MAX_SIZE_BYTES) {
+		throw new Error(
+			`Whitelist response too large: ${contentLength} bytes (max ${WHITELIST_MAX_SIZE_BYTES}).`,
+		);
+	}
+}
+
+function assertWhitelistBodySize(text) {
+	if (text.length > WHITELIST_MAX_SIZE_BYTES) {
+		throw new Error(
+			`Whitelist body too large: ${text.length} characters (max ${WHITELIST_MAX_SIZE_BYTES}).`,
+		);
+	}
+}
+
+function warnOnSuspiciousWhitelist(brands) {
+	if (brands.length > 0 && brands.length < 5) {
+		console.warn(
+			`Review Rank: whitelist suspiciously small (${brands.length} entries).`,
+		);
+	}
+}
+
 async function fetchRemoteBrandWhitelist() {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(
@@ -95,37 +127,111 @@ async function fetchRemoteBrandWhitelist() {
 			signal: controller.signal,
 		});
 
-		if (!response.ok) {
-			throw new Error(`Whitelist fetch failed with status ${response.status}.`);
-		}
-
-		const contentLength = Number(response.headers.get("content-length") || 0);
-
-		if (contentLength > WHITELIST_MAX_SIZE_BYTES) {
-			throw new Error(
-				`Whitelist response too large: ${contentLength} bytes (max ${WHITELIST_MAX_SIZE_BYTES}).`,
-			);
-		}
-
+		assertWhitelistResponseOk(response);
+		assertWhitelistResponseSize(response);
 		const text = await response.text();
-
-		if (text.length > WHITELIST_MAX_SIZE_BYTES) {
-			throw new Error(
-				`Whitelist body too large: ${text.length} characters (max ${WHITELIST_MAX_SIZE_BYTES}).`,
-			);
-		}
-
+		assertWhitelistBodySize(text);
 		const brands = parseBrandWhitelist(text);
 
-		if (brands.length > 0 && brands.length < 5) {
-			console.warn(
-				`Review Rank: whitelist suspiciously small (${brands.length} entries).`,
-			);
-		}
-
+		warnOnSuspiciousWhitelist(brands);
 		return brands;
 	} finally {
 		clearTimeout(timeoutId);
+	}
+}
+
+function shouldSkipWhitelistSync(force, state) {
+	return (
+		!force &&
+		!shouldRefreshBrandWhitelist({
+			brandWhitelist: state.brandWhitelist,
+			brandWhitelistFetchedAt: state.brandWhitelistFetchedAt,
+		})
+	);
+}
+
+async function markWhitelistSyncAttempt(attemptAt) {
+	await extensionApi.storage.local.set({
+		brandWhitelistLastAttemptAt: attemptAt,
+		brandWhitelistLastError: "",
+		brandWhitelistSyncStatus: "syncing",
+	});
+}
+
+function buildRemoteWhitelistState(remoteWhitelist, attemptAt) {
+	return {
+		brandWhitelist: remoteWhitelist,
+		brandWhitelistFetchedAt: attemptAt,
+		brandWhitelistSource: "remote",
+		brandWhitelistLastAttemptAt: attemptAt,
+		brandWhitelistLastError: "",
+		brandWhitelistSyncStatus: "idle",
+	};
+}
+
+async function fetchUsableRemoteWhitelist() {
+	const remoteWhitelist = await fetchRemoteBrandWhitelist();
+
+	if (!remoteWhitelist.length) {
+		throw new Error("Whitelist fetch returned an empty list.");
+	}
+
+	return remoteWhitelist;
+}
+
+async function writeRemoteWhitelist(remoteWhitelist, attemptAt) {
+	const nextState = buildRemoteWhitelistState(remoteWhitelist, attemptAt);
+	await extensionApi.storage.local.set(nextState);
+	return buildWhitelistStatus(nextState);
+}
+
+function getErrorMessage(error) {
+	return error?.message || String(error);
+}
+
+async function recordWhitelistSyncFailure(error, currentWhitelist, attemptAt) {
+	const lastError = getErrorMessage(error);
+
+	if (!currentWhitelist.length) {
+		return writeBundledWhitelist({
+			loadedAt: attemptAt,
+			lastError,
+			syncStatus: "error",
+		});
+	}
+
+	await extensionApi.storage.local.set({
+		brandWhitelistLastAttemptAt: attemptAt,
+		brandWhitelistLastError: lastError,
+		brandWhitelistSyncStatus: "error",
+	});
+
+	return buildWhitelistStatus(await getStoredWhitelistState());
+}
+
+async function runBrandWhitelistSync(options = {}) {
+	const force = options.force === true;
+	const attemptAt = Date.now();
+	const storedState = await getStoredWhitelistState();
+	const currentWhitelist = normalizeBrandWhitelist(storedState.brandWhitelist);
+
+	if (!currentWhitelist.length) {
+		await ensureBundledWhitelistFallback();
+	}
+
+	const latestState = await getStoredWhitelistState();
+
+	if (shouldSkipWhitelistSync(force, latestState)) {
+		return buildWhitelistStatus(latestState);
+	}
+
+	await markWhitelistSyncAttempt(attemptAt);
+
+	try {
+		return writeRemoteWhitelist(await fetchUsableRemoteWhitelist(), attemptAt);
+	} catch (error) {
+		console.error("Review Rank whitelist sync failed.", error);
+		return recordWhitelistSyncFailure(error, currentWhitelist, attemptAt);
 	}
 }
 
@@ -134,74 +240,7 @@ async function syncBrandWhitelist(options = {}) {
 		return activeSyncPromise;
 	}
 
-	activeSyncPromise = (async () => {
-		const force = options.force === true;
-		const attemptAt = Date.now();
-		const storedState = await getStoredWhitelistState();
-		const currentWhitelist = normalizeBrandWhitelist(
-			storedState.brandWhitelist,
-		);
-
-		if (!currentWhitelist.length) {
-			await ensureBundledWhitelistFallback();
-		}
-
-		const latestState = await getStoredWhitelistState();
-
-		if (
-			!force &&
-			!shouldRefreshBrandWhitelist({
-				brandWhitelist: latestState.brandWhitelist,
-				brandWhitelistFetchedAt: latestState.brandWhitelistFetchedAt,
-			})
-		) {
-			return buildWhitelistStatus(latestState);
-		}
-
-		await extensionApi.storage.local.set({
-			brandWhitelistLastAttemptAt: attemptAt,
-			brandWhitelistLastError: "",
-			brandWhitelistSyncStatus: "syncing",
-		});
-
-		try {
-			const remoteWhitelist = await fetchRemoteBrandWhitelist();
-
-			if (!remoteWhitelist.length) {
-				throw new Error("Whitelist fetch returned an empty list.");
-			}
-
-			const nextState = {
-				brandWhitelist: remoteWhitelist,
-				brandWhitelistFetchedAt: attemptAt,
-				brandWhitelistSource: "remote",
-				brandWhitelistLastAttemptAt: attemptAt,
-				brandWhitelistLastError: "",
-				brandWhitelistSyncStatus: "idle",
-			};
-
-			await extensionApi.storage.local.set(nextState);
-			return buildWhitelistStatus(nextState);
-		} catch (error) {
-			console.error("Review Rank whitelist sync failed.", error);
-
-			if (!currentWhitelist.length) {
-				await writeBundledWhitelist({
-					loadedAt: attemptAt,
-					lastError: error?.message || String(error),
-					syncStatus: "error",
-				});
-			} else {
-				await extensionApi.storage.local.set({
-					brandWhitelistLastAttemptAt: attemptAt,
-					brandWhitelistLastError: error?.message || String(error),
-					brandWhitelistSyncStatus: "error",
-				});
-			}
-
-			return buildWhitelistStatus(await getStoredWhitelistState());
-		}
-	})().finally(() => {
+	activeSyncPromise = runBrandWhitelistSync(options).finally(() => {
 		activeSyncPromise = null;
 	});
 
@@ -298,21 +337,7 @@ function registerRuntimeHandlers() {
 				return undefined;
 			}
 
-			const run = async () => {
-				switch (message?.type) {
-					case "prime-rank-filter:get-whitelist-status":
-						await ensureBundledWhitelistFallback();
-						return buildWhitelistStatus(await getStoredWhitelistState());
-					case "prime-rank-filter:refresh-brand-whitelist":
-						return syncBrandWhitelist({
-							force: true,
-						});
-					default:
-						return undefined;
-				}
-			};
-
-			run()
+			handleWhitelistStatusMessage(message)
 				.then((response) => {
 					sendResponse(response);
 				})
@@ -325,6 +350,20 @@ function registerRuntimeHandlers() {
 			return true;
 		},
 	);
+}
+
+async function handleWhitelistStatusMessage(message) {
+	switch (message?.type) {
+		case "prime-rank-filter:get-whitelist-status":
+			await ensureBundledWhitelistFallback();
+			return buildWhitelistStatus(await getStoredWhitelistState());
+		case "prime-rank-filter:refresh-brand-whitelist":
+			return syncBrandWhitelist({
+				force: true,
+			});
+		default:
+			return undefined;
+	}
 }
 
 extensionApi.runtime.onInstalled.addListener(() => {

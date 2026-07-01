@@ -31,6 +31,7 @@
 		const BRAND_SUFFIX_PATTERN = /\s+store$/;
 		const COUNT_KEYWORD_PATTERN =
 			/\b(ratings?|reviews?|bewertung(?:en)?|rezension(?:en)?|evaluations?|avis|calificaciones?|opiniones|recensioni|recensies|avaliac(?:ao|oes)|ratings)\b/i;
+		const RATING_NUMBER_PATTERN = /\d+(?:[.,\u202f\u00a0\s]\d+)*/g;
 		const SPONSORED_TEXT_PATTERN =
 			/\b(sponsored|gesponsert|sponsorise|sponsorisé|patrocinad[oa]s?|sponsorizzat[oa]s?|gesponsord|sponsorowane|sponsrad|sponsret|sponsad|sponsorlu)\b/i;
 
@@ -110,36 +111,57 @@
 				.trim();
 		}
 
-		function buildBrandIndex(rawBrands) {
-			const groupedBrands = new Map();
-			const brands = normalizeBrandWhitelist(rawBrands);
+		function createBrandIndexEntry(brand) {
+			const normalizedBrand = sanitizeBrandCandidate(brand);
 
-			for (const brand of brands) {
-				const normalizedBrand = sanitizeBrandCandidate(brand);
-
-				if (!normalizedBrand) {
-					continue;
-				}
-
-				const [firstToken] = normalizedBrand.split(" ");
-
-				if (!firstToken) {
-					continue;
-				}
-
-				const bucket = groupedBrands.get(firstToken) || [];
-				bucket.push({
-					raw: brand,
-					normalized: normalizedBrand,
-				});
-				groupedBrands.set(firstToken, bucket);
+			if (!normalizedBrand) {
+				return null;
 			}
 
+			const [firstToken] = normalizedBrand.split(" ");
+
+			if (!firstToken) {
+				return null;
+			}
+
+			return {
+				firstToken,
+				brand: {
+					raw: brand,
+					normalized: normalizedBrand,
+				},
+			};
+		}
+
+		function addBrandToIndex(groupedBrands, brand) {
+			const entry = createBrandIndexEntry(brand);
+
+			if (!entry) {
+				return;
+			}
+
+			const bucket = groupedBrands.get(entry.firstToken) || [];
+			bucket.push(entry.brand);
+			groupedBrands.set(entry.firstToken, bucket);
+		}
+
+		function sortBrandIndex(groupedBrands) {
 			for (const bucket of groupedBrands.values()) {
 				bucket.sort(
 					(left, right) => right.normalized.length - left.normalized.length,
 				);
 			}
+		}
+
+		function buildBrandIndex(rawBrands) {
+			const groupedBrands = new Map();
+			const brands = normalizeBrandWhitelist(rawBrands);
+
+			for (const brand of brands) {
+				addBrandToIndex(groupedBrands, brand);
+			}
+
+			sortBrandIndex(groupedBrands);
 
 			return groupedBrands;
 		}
@@ -151,6 +173,21 @@
 				candidate.startsWith(`${brand.normalized}-`) ||
 				candidate.startsWith(`${brand.normalized}:`)
 			);
+		}
+
+		function getBrandBucket(normalizedText, brandIndex) {
+			const [firstToken] = normalizedText.split(" ");
+			return firstToken ? brandIndex.get(firstToken) || [] : [];
+		}
+
+		function findMatchingBrand(normalizedText, brands) {
+			for (const brand of brands) {
+				if (matchesBrandCandidate(normalizedText, brand)) {
+					return brand.raw;
+				}
+			}
+
+			return "";
 		}
 
 		function matchWhitelistedBrand(textCandidates, brandIndex) {
@@ -165,13 +202,13 @@
 					continue;
 				}
 
-				const [firstToken] = normalizedText.split(" ");
-				const bucket = brandIndex.get(firstToken) || [];
+				const matchedBrand = findMatchingBrand(
+					normalizedText,
+					getBrandBucket(normalizedText, brandIndex),
+				);
 
-				for (const brand of bucket) {
-					if (matchesBrandCandidate(normalizedText, brand)) {
-						return brand.raw;
-					}
+				if (matchedBrand) {
+					return matchedBrand;
 				}
 			}
 
@@ -210,6 +247,35 @@
 			};
 		}
 
+		function parseRatingNumbers(text) {
+			return (text.match(RATING_NUMBER_PATTERN) || [])
+				.map(parseNumericToken)
+				.filter(Boolean);
+		}
+
+		function getIntegerRatingValues(parsedNumbers) {
+			return parsedNumbers
+				.filter((entry) => entry.type === "integer")
+				.map((entry) => entry.value);
+		}
+
+		function hasDecimalRating(parsedNumbers) {
+			return parsedNumbers.some((entry) => entry.type === "decimal-rating");
+		}
+
+		function selectRatingsCount(rawText, integerValues, parsedNumbers) {
+			if (integerValues.length === 1 && !hasDecimalRating(parsedNumbers)) {
+				return integerValues[0];
+			}
+
+			if (COUNT_KEYWORD_PATTERN.test(rawText.toLowerCase())) {
+				return Math.max(...integerValues);
+			}
+
+			const valuesAboveStars = integerValues.filter((value) => value > 5);
+			return valuesAboveStars.length > 0 ? Math.max(...valuesAboveStars) : 0;
+		}
+
 		function parseRatingsCountText(text) {
 			const rawText = String(text ?? "").trim();
 
@@ -217,43 +283,19 @@
 				return 0;
 			}
 
-			const numericTokens =
-				rawText.match(/\d+(?:[.,\u202f\u00a0\s]\d+)*/g) || [];
-			const parsedNumbers = numericTokens
-				.map(parseNumericToken)
-				.filter(Boolean);
+			const parsedNumbers = parseRatingNumbers(rawText);
 
 			if (!parsedNumbers.length) {
 				return 0;
 			}
 
-			const integerValues = parsedNumbers
-				.filter((entry) => entry.type === "integer")
-				.map((entry) => entry.value);
-			const hasDecimalRating = parsedNumbers.some(
-				(entry) => entry.type === "decimal-rating",
-			);
-			const loweredText = rawText.toLowerCase();
+			const integerValues = getIntegerRatingValues(parsedNumbers);
 
 			if (!integerValues.length) {
 				return 0;
 			}
 
-			if (integerValues.length === 1 && !hasDecimalRating) {
-				return integerValues[0];
-			}
-
-			if (COUNT_KEYWORD_PATTERN.test(loweredText)) {
-				return Math.max(...integerValues);
-			}
-
-			const valuesAboveStars = integerValues.filter((value) => value > 5);
-
-			if (valuesAboveStars.length > 0) {
-				return Math.max(...valuesAboveStars);
-			}
-
-			return 0;
+			return selectRatingsCount(rawText, integerValues, parsedNumbers);
 		}
 
 		function parseRatingsCountFromTexts(textCandidates) {

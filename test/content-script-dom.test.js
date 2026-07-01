@@ -19,63 +19,10 @@ const fixtureHtml = fs.readFileSync(
 const DEFAULT_TEST_URL =
 	"https://www.amazon.com/s?k=headphones&s=review-rank&rh=p_85%3A2470955011";
 
-function createTestEnv(options = {}) {
-	const { html = fixtureHtml, storage = {}, url = DEFAULT_TEST_URL } = options;
+function createTestWindow(html, url, replacedUrls) {
 	const { document, window } = parseHTML(
 		`<!DOCTYPE html><html><body>${html}</body></html>`,
 	);
-
-	const storageData = { ...storage };
-	const sentMessages = [];
-	const runtimeMessageListeners = [];
-	const storageChangeListeners = [];
-	const replacedUrls = [];
-
-	const extensionApi = {
-		storage: {
-			local: {
-				get: async (defaults) => ({ ...defaults, ...storageData }),
-				set: async (values) => {
-					const changes = {};
-
-					for (const [key, value] of Object.entries(values)) {
-						if (storageData[key] === value) {
-							continue;
-						}
-
-						changes[key] = {
-							oldValue: storageData[key],
-							newValue: value,
-						};
-					}
-
-					Object.assign(storageData, values);
-
-					if (Object.keys(changes).length > 0) {
-						for (const listener of storageChangeListeners) {
-							listener(changes, "local");
-						}
-					}
-				},
-			},
-			onChanged: {
-				addListener: (listener) => {
-					storageChangeListeners.push(listener);
-				},
-			},
-		},
-		runtime: {
-			onMessage: {
-				addListener: (listener) => {
-					runtimeMessageListeners.push(listener);
-				},
-			},
-			sendMessage: (msg) => {
-				sentMessages.push(msg);
-				return Promise.resolve();
-			},
-		},
-	};
 
 	window.setTimeout = setTimeout;
 	window.clearTimeout = clearTimeout;
@@ -90,7 +37,69 @@ function createTestEnv(options = {}) {
 		},
 	};
 
-	// Execute shared module in a fresh scope
+	return { document, window };
+}
+
+function getStorageChanges(storageData, values) {
+	const changes = {};
+
+	for (const [key, value] of Object.entries(values)) {
+		if (storageData[key] === value) {
+			continue;
+		}
+
+		changes[key] = {
+			oldValue: storageData[key],
+			newValue: value,
+		};
+	}
+
+	return changes;
+}
+
+function notifyStorageListeners(changes, storageChangeListeners) {
+	if (Object.keys(changes).length === 0) {
+		return;
+	}
+
+	for (const listener of storageChangeListeners) {
+		listener(changes, "local");
+	}
+}
+
+function createStorageApi(storageData, storageChangeListeners) {
+	return {
+		local: {
+			get: async (defaults) => ({ ...defaults, ...storageData }),
+			set: async (values) => {
+				const changes = getStorageChanges(storageData, values);
+				Object.assign(storageData, values);
+				notifyStorageListeners(changes, storageChangeListeners);
+			},
+		},
+		onChanged: {
+			addListener: (listener) => {
+				storageChangeListeners.push(listener);
+			},
+		},
+	};
+}
+
+function createRuntimeApi(sentMessages, runtimeMessageListeners) {
+	return {
+		onMessage: {
+			addListener: (listener) => {
+				runtimeMessageListeners.push(listener);
+			},
+		},
+		sendMessage: (msg) => {
+			sentMessages.push(msg);
+			return Promise.resolve();
+		},
+	};
+}
+
+function loadSharedApi() {
 	const sharedGlobal = {
 		globalThis: {},
 		module: { exports: {} },
@@ -100,12 +109,26 @@ function createTestEnv(options = {}) {
 	const sharedFn = new Function("globalThis", "module", sharedSource);
 	sharedFn(sharedGlobal, sharedGlobal.module);
 
-	const shared = sharedGlobal.PrimeRankShared;
+	return sharedGlobal.PrimeRankShared;
+}
+
+function createTestEnv(options = {}) {
+	const { html = fixtureHtml, storage = {}, url = DEFAULT_TEST_URL } = options;
+	const storageData = { ...storage };
+	const sentMessages = [];
+	const runtimeMessageListeners = [];
+	const storageChangeListeners = [];
+	const replacedUrls = [];
+	const { document, window } = createTestWindow(html, url, replacedUrls);
+	const extensionApi = {
+		storage: createStorageApi(storageData, storageChangeListeners),
+		runtime: createRuntimeApi(sentMessages, runtimeMessageListeners),
+	};
 
 	return {
 		document,
 		window,
-		shared,
+		shared: loadSharedApi(),
 		extensionApi,
 		storageData,
 		sentMessages,
@@ -166,27 +189,42 @@ async function runContentScript(options = {}) {
 	return env;
 }
 
+function normalizeSelectors(selectors) {
+	return Array.isArray(selectors) ? selectors : [selectors];
+}
+
+function getNodeTextCandidate(node) {
+	return (
+		node.getAttribute("aria-label") ||
+		node.getAttribute("data-ad-feedback") ||
+		node.textContent ||
+		""
+	).trim();
+}
+
+function collectTextCandidates(root, selector, seen, values) {
+	if (!selector) {
+		return;
+	}
+
+	for (const node of root.querySelectorAll(selector)) {
+		const text = getNodeTextCandidate(node);
+
+		if (!text || seen.has(text)) {
+			continue;
+		}
+
+		seen.add(text);
+		values.push(text);
+	}
+}
+
 function getTextCandidates(_document, root, selectors) {
 	const seen = new Set();
 	const values = [];
-	const normalizedSelectors = Array.isArray(selectors)
-		? selectors
-		: [selectors];
 
-	for (const selector of normalizedSelectors) {
-		if (!selector) continue;
-		const nodes = root.querySelectorAll(selector);
-		for (const node of nodes) {
-			const text = (
-				node.getAttribute("aria-label") ||
-				node.getAttribute("data-ad-feedback") ||
-				node.textContent ||
-				""
-			).trim();
-			if (!text || seen.has(text)) continue;
-			seen.add(text);
-			values.push(text);
-		}
+	for (const selector of normalizeSelectors(selectors)) {
+		collectTextCandidates(root, selector, seen, values);
 	}
 
 	return values;
@@ -332,43 +370,79 @@ test("brand whitelist returns empty for non-whitelisted brand", () => {
 // Tests: Card filtering logic (evaluateCard equivalent)
 // ---------------------------------------------------------------------------
 
-function evaluateCard(document, shared, card, settings, brandWhitelist = []) {
-	const resolvedSettings = shared.sanitizeSettings(settings);
+function getCardRatingsCount(document, shared, card) {
 	const ratingsTexts = getTextCandidates(document, card, RATING_TEXT_SELECTORS);
-	const ratingsCount = shared.parseRatingsCountFromTexts(ratingsTexts);
+	return shared.parseRatingsCountFromTexts(ratingsTexts);
+}
 
+function getBrandIndex(shared, settings, brandWhitelist) {
 	const normalizedWhitelist = shared.normalizeBrandWhitelist(brandWhitelist);
-	const brandIndex =
-		resolvedSettings.useBrandWhitelist && normalizedWhitelist.length
-			? shared.buildBrandIndex(normalizedWhitelist)
-			: null;
 
+	return settings.useBrandWhitelist && normalizedWhitelist.length
+		? shared.buildBrandIndex(normalizedWhitelist)
+		: null;
+}
+
+function getMatchedBrand(document, shared, card, settings, brandIndex) {
 	const brandTexts = getTextCandidates(document, card, BRAND_TEXT_SELECTORS);
-	const matchedBrand =
-		resolvedSettings.useBrandWhitelist && brandIndex
-			? shared.matchWhitelistedBrand(brandTexts, brandIndex)
-			: "";
 
-	// Simplified sponsored check
-	const sponsored =
-		resolvedSettings.hideSponsoredResults &&
+	return settings.useBrandWhitelist && brandIndex
+		? shared.matchWhitelistedBrand(brandTexts, brandIndex)
+		: "";
+}
+
+function isSponsoredTestCard(card, settings) {
+	return (
+		settings.hideSponsoredResults &&
 		(card.matches(SPONSORED_STRUCTURAL_SELECTOR) ||
 			Boolean(card.querySelector(SPONSORED_STRUCTURAL_SELECTOR)) ||
-			Boolean(card.closest("[data-component-type='sp-sponsored-result']")));
+			Boolean(card.closest("[data-component-type='sp-sponsored-result']")))
+	);
+}
 
+function getHiddenReasons(
+	settings,
+	ratingsCount,
+	sponsored,
+	brandIndex,
+	matchedBrand,
+) {
 	const hiddenReasons = [];
 
-	if (resolvedSettings.hideSponsoredResults && sponsored) {
+	if (settings.hideSponsoredResults && sponsored) {
 		hiddenReasons.push("sponsored");
 	}
 
-	if (ratingsCount < resolvedSettings.minimumRatings) {
+	if (ratingsCount < settings.minimumRatings) {
 		hiddenReasons.push("low-reviews");
 	}
 
-	if (resolvedSettings.useBrandWhitelist && brandIndex && !matchedBrand) {
+	if (settings.useBrandWhitelist && brandIndex && !matchedBrand) {
 		hiddenReasons.push("brand");
 	}
+
+	return hiddenReasons;
+}
+
+function evaluateCard(document, shared, card, settings, brandWhitelist = []) {
+	const resolvedSettings = shared.sanitizeSettings(settings);
+	const ratingsCount = getCardRatingsCount(document, shared, card);
+	const brandIndex = getBrandIndex(shared, resolvedSettings, brandWhitelist);
+	const matchedBrand = getMatchedBrand(
+		document,
+		shared,
+		card,
+		resolvedSettings,
+		brandIndex,
+	);
+	const sponsored = isSponsoredTestCard(card, resolvedSettings);
+	const hiddenReasons = getHiddenReasons(
+		resolvedSettings,
+		ratingsCount,
+		sponsored,
+		brandIndex,
+		matchedBrand,
+	);
 
 	return {
 		keep: hiddenReasons.length === 0,

@@ -52,6 +52,14 @@ const PRIME_TOKEN_ATTRIBUTE_SELECTOR = [
 	"[data-a-modal*='p_85']",
 	"input[value*='p_85']",
 ].join(", ");
+const PRIME_TOKEN_ATTRIBUTE_NAMES = [
+	"href",
+	"data-url",
+	"data-query",
+	"data-a-modal",
+	"value",
+];
+const PRIME_TOKEN_SCRIPT_SCAN_LIMIT = 350_000;
 const SPONSORED_LABEL_SELECTORS = [
 	".puis-sponsored-label-text",
 	".s-sponsored-label-text",
@@ -315,25 +323,11 @@ function addScoredPrimeTokens(scoresByToken, text, score) {
 	}
 }
 
-function resolvePrimeToken() {
-	if (STATE.primeTokenHref === window.location.href && STATE.primeTokenValue) {
-		return STATE.primeTokenValue;
-	}
-
-	const scoresByToken = new Map();
-
-	addScoredPrimeTokens(scoresByToken, window.location.href, 100);
-
+function addAttributePrimeTokenCandidates(scoresByToken) {
 	for (const element of document.querySelectorAll(
 		PRIME_TOKEN_ATTRIBUTE_SELECTOR,
 	)) {
-		for (const attributeName of [
-			"href",
-			"data-url",
-			"data-query",
-			"data-a-modal",
-			"value",
-		]) {
+		for (const attributeName of PRIME_TOKEN_ATTRIBUTE_NAMES) {
 			const attributeValue = element.getAttribute(attributeName);
 
 			if (attributeValue) {
@@ -341,26 +335,28 @@ function resolvePrimeToken() {
 			}
 		}
 	}
+}
 
-	if (scoresByToken.size === 0) {
-		let scannedCharacters = 0;
+function addInlineScriptPrimeTokenCandidates(scoresByToken) {
+	let scannedCharacters = 0;
 
-		for (const script of document.querySelectorAll("script:not([src])")) {
-			const scriptText = script.textContent || "";
+	for (const script of document.querySelectorAll("script:not([src])")) {
+		const scriptText = script.textContent || "";
 
-			if (!scriptText) {
-				continue;
-			}
+		if (!scriptText) {
+			continue;
+		}
 
-			scannedCharacters += scriptText.length;
-			addScoredPrimeTokens(scoresByToken, scriptText, 12);
+		scannedCharacters += scriptText.length;
+		addScoredPrimeTokens(scoresByToken, scriptText, 12);
 
-			if (scannedCharacters >= 350000) {
-				break;
-			}
+		if (scannedCharacters >= PRIME_TOKEN_SCRIPT_SCAN_LIMIT) {
+			return;
 		}
 	}
+}
 
+function getHighestScoredPrimeToken(scoresByToken) {
 	let resolvedPrimeToken = "";
 	let resolvedScore = -1;
 
@@ -371,6 +367,24 @@ function resolvePrimeToken() {
 		}
 	}
 
+	return resolvedPrimeToken;
+}
+
+function resolvePrimeToken() {
+	if (STATE.primeTokenHref === window.location.href && STATE.primeTokenValue) {
+		return STATE.primeTokenValue;
+	}
+
+	const scoresByToken = new Map();
+
+	addScoredPrimeTokens(scoresByToken, window.location.href, 100);
+	addAttributePrimeTokenCandidates(scoresByToken);
+
+	if (scoresByToken.size === 0) {
+		addInlineScriptPrimeTokenCandidates(scoresByToken);
+	}
+
+	const resolvedPrimeToken = getHighestScoredPrimeToken(scoresByToken);
 	STATE.primeTokenHref = window.location.href;
 	STATE.primeTokenValue = resolvedPrimeToken;
 
@@ -482,41 +496,45 @@ function isSponsoredCard(card) {
 	return result;
 }
 
+function scopeHasSponsoredStructure(scope) {
+	return Boolean(
+		scope.matches?.(SPONSORED_STRUCTURAL_SELECTOR) ||
+			scope.querySelector?.(SPONSORED_STRUCTURAL_SELECTOR),
+	);
+}
+
+function getSponsoredAttributeTexts(scope) {
+	return [
+		scope.getAttribute?.("data-ad-feedback"),
+		scope.getAttribute?.("data-ad-details"),
+		scope.getAttribute?.("data-component-type"),
+		scope.getAttribute?.("data-cel-widget"),
+		scope.getAttribute?.("id"),
+		scope.getAttribute?.("aria-label"),
+	];
+}
+
+function scopeHasSponsoredText(scope) {
+	return (
+		getSponsoredAttributeTexts(scope).some(matchesSponsoredLabelText) ||
+		getTextCandidates(scope, SPONSORED_TEXT_SELECTORS).some(
+			matchesSponsoredLabelText,
+		) ||
+		matchesSponsoredLabelText((scope.textContent || "").slice(0, 1600))
+	);
+}
+
+function scopeLooksSponsored(scope) {
+	return (
+		scopeHasSponsoredStructure(scope) ||
+		scopeHasSponsoredText(scope) ||
+		scopeContainsSponsoredLink(scope)
+	);
+}
+
 function isSponsoredCardUncached(card) {
 	for (const scope of getSponsoredDetectionScopes(card)) {
-		if (
-			scope.matches?.(SPONSORED_STRUCTURAL_SELECTOR) ||
-			scope.querySelector?.(SPONSORED_STRUCTURAL_SELECTOR)
-		) {
-			return true;
-		}
-
-		for (const text of [
-			scope.getAttribute?.("data-ad-feedback"),
-			scope.getAttribute?.("data-ad-details"),
-			scope.getAttribute?.("data-component-type"),
-			scope.getAttribute?.("data-cel-widget"),
-			scope.getAttribute?.("id"),
-			scope.getAttribute?.("aria-label"),
-		]) {
-			if (matchesSponsoredLabelText(text)) {
-				return true;
-			}
-		}
-
-		if (
-			getTextCandidates(scope, SPONSORED_TEXT_SELECTORS).some(
-				matchesSponsoredLabelText,
-			)
-		) {
-			return true;
-		}
-
-		if (scopeContainsSponsoredLink(scope)) {
-			return true;
-		}
-
-		if (matchesSponsoredLabelText((scope.textContent || "").slice(0, 1600))) {
+		if (scopeLooksSponsored(scope)) {
 			return true;
 		}
 	}
@@ -686,36 +704,40 @@ function summarizeResults(container = findResultsContainer()) {
 	};
 
 	for (const card of cards) {
-		const hiddenByModule = Boolean(
-			card.closest("[data-prime-rank-sponsored-module='hidden']"),
-		);
-		const isVisible =
-			card.dataset.primeRankFilter !== "hidden" && hiddenByModule === false;
-		const hiddenReasons = (card.dataset.primeRankHiddenReasons || "")
-			.split(",")
-			.filter(Boolean);
-
-		if (isVisible) {
-			summary.visibleCount += 1;
-			continue;
-		}
-
-		summary.hiddenCount += 1;
-
-		if (hiddenReasons.includes("low-reviews")) {
-			summary.hiddenByRatings += 1;
-		}
-
-		if (hiddenReasons.includes("brand")) {
-			summary.hiddenByBrand += 1;
-		}
-
-		if (hiddenByModule || hiddenReasons.includes("sponsored")) {
-			summary.hiddenBySponsored += 1;
-		}
+		addCardToSummary(summary, card);
 	}
 
 	return summary;
+}
+
+function addCardToSummary(summary, card) {
+	const hiddenByModule = Boolean(
+		card.closest("[data-prime-rank-sponsored-module='hidden']"),
+	);
+	const hiddenReasons = (card.dataset.primeRankHiddenReasons || "")
+		.split(",")
+		.filter(Boolean);
+	const isVisible =
+		card.dataset.primeRankFilter !== "hidden" && hiddenByModule === false;
+
+	if (isVisible) {
+		summary.visibleCount += 1;
+		return;
+	}
+
+	summary.hiddenCount += 1;
+
+	if (hiddenReasons.includes("low-reviews")) {
+		summary.hiddenByRatings += 1;
+	}
+
+	if (hiddenReasons.includes("brand")) {
+		summary.hiddenByBrand += 1;
+	}
+
+	if (hiddenByModule || hiddenReasons.includes("sponsored")) {
+		summary.hiddenBySponsored += 1;
+	}
 }
 
 function notifyBadgeCount() {
@@ -793,6 +815,113 @@ function mutationAddsStandaloneSponsoredModule(mutation) {
 	return false;
 }
 
+function mutationAddsResultsContainer(mutation) {
+	for (const node of mutation.addedNodes) {
+		if (node instanceof Element && node.matches(RESULTS_CONTAINER_SELECTOR)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+function rememberChangedCard(node, changedCards) {
+	if (!(node instanceof Element)) {
+		return;
+	}
+
+	const owningCard = node.closest(RESULT_CARD_SELECTOR);
+
+	if (!owningCard) {
+		return;
+	}
+
+	cache.sponsored.delete(owningCard);
+	changedCards.add(owningCard);
+}
+
+function rememberCardsInNode(node, changedCards) {
+	if (!(node instanceof Element)) {
+		return;
+	}
+
+	for (const card of getSearchResultCards(node)) {
+		cache.sponsored.delete(card);
+		changedCards.add(card);
+	}
+}
+
+function getMutationElementTarget(mutation) {
+	const target =
+		mutation.type === "characterData"
+			? mutation.target.parentElement
+			: mutation.target;
+
+	return target instanceof Element ? target : null;
+}
+
+function collectChildListMutation(mutation, changedCards) {
+	rememberChangedCard(mutation.target, changedCards);
+
+	if (
+		mutationAddsResultsContainer(mutation) ||
+		mutationAddsStandaloneSponsoredModule(mutation)
+	) {
+		return true;
+	}
+
+	for (const node of mutation.addedNodes) {
+		rememberCardsInNode(node, changedCards);
+	}
+
+	return false;
+}
+
+function summarizeObservedMutations(mutations) {
+	const changedCards = new Set();
+	let needsFullRefresh = false;
+	let sawRemoval = false;
+
+	for (const mutation of mutations) {
+		if (mutation.type === "attributes" || mutation.type === "characterData") {
+			rememberChangedCard(getMutationElementTarget(mutation), changedCards);
+			continue;
+		}
+
+		if (mutation.type !== "childList") {
+			continue;
+		}
+
+		sawRemoval = sawRemoval || mutation.removedNodes.length > 0;
+		needsFullRefresh = collectChildListMutation(mutation, changedCards);
+
+		if (needsFullRefresh) {
+			break;
+		}
+	}
+
+	return { changedCards, needsFullRefresh, sawRemoval };
+}
+
+function handleResultsMutations(mutations, container) {
+	const { changedCards, needsFullRefresh, sawRemoval } =
+		summarizeObservedMutations(mutations);
+
+	if (needsFullRefresh) {
+		scheduleApply({ fullRefresh: true });
+		return;
+	}
+
+	if (changedCards.size > 0) {
+		handleObservedCardChanges(Array.from(changedCards), container);
+		return;
+	}
+
+	if (sawRemoval) {
+		refreshPageSummary(container);
+	}
+}
+
 function ensureResultsObserver(container) {
 	if (!container) {
 		disconnectResultsObserver();
@@ -807,85 +936,7 @@ function ensureResultsObserver(container) {
 	disconnectResultsObserver();
 	STATE.observedContainer = container;
 	STATE.resultsObserver = new MutationObserver((mutations) => {
-		const changedCards = new Set();
-		let needsFullRefresh = false;
-		let sawRemoval = false;
-
-		for (const mutation of mutations) {
-			if (mutation.type === "attributes" || mutation.type === "characterData") {
-				const target =
-					mutation.type === "characterData"
-						? mutation.target.parentElement
-						: mutation.target;
-
-				if (target instanceof Element) {
-					const owningCard = target.closest(RESULT_CARD_SELECTOR);
-
-					if (owningCard) {
-						cache.sponsored.delete(owningCard);
-						changedCards.add(owningCard);
-					}
-				}
-
-				continue;
-			}
-
-			if (mutation.type !== "childList") {
-				continue;
-			}
-
-			if (mutation.removedNodes.length > 0) {
-				sawRemoval = true;
-			}
-
-			if (mutation.target instanceof Element) {
-				const owningCard = mutation.target.closest(RESULT_CARD_SELECTOR);
-
-				if (owningCard) {
-					cache.sponsored.delete(owningCard);
-					changedCards.add(owningCard);
-				}
-			}
-
-			for (const node of mutation.addedNodes) {
-				if (!(node instanceof Element)) {
-					continue;
-				}
-
-				if (node.matches(RESULTS_CONTAINER_SELECTOR)) {
-					needsFullRefresh = true;
-					break;
-				}
-
-				if (mutationAddsStandaloneSponsoredModule(mutation)) {
-					needsFullRefresh = true;
-					break;
-				}
-
-				for (const card of getSearchResultCards(node)) {
-					cache.sponsored.delete(card);
-					changedCards.add(card);
-				}
-			}
-
-			if (needsFullRefresh) {
-				break;
-			}
-		}
-
-		if (needsFullRefresh) {
-			scheduleApply({ fullRefresh: true });
-			return;
-		}
-
-		if (changedCards.size > 0) {
-			handleObservedCardChanges(Array.from(changedCards), container);
-			return;
-		}
-
-		if (sawRemoval) {
-			refreshPageSummary(container);
-		}
+		handleResultsMutations(mutations, container);
 	});
 
 	STATE.resultsObserver.observe(container, {
@@ -978,30 +1029,12 @@ function observeSettingsChanges() {
 			return;
 		}
 
-		let settingsChanged = false;
-		const nextSettings = { ...STATE.settings };
+		const settingsChanged = applyStoredSettingsChanges(changes);
+		const whitelistChanged = applyStoredWhitelistChanges(changes);
 
-		for (const key of Object.keys(DEFAULT_SETTINGS)) {
-			if (!(key in changes)) {
-				continue;
-			}
-
-			nextSettings[key] = changes[key].newValue;
-			settingsChanged = true;
-		}
-
-		if ("brandWhitelist" in changes) {
-			STATE.brandWhitelist = normalizeBrandWhitelist(
-				changes.brandWhitelist.newValue,
-			);
-			STATE.brandIndex = null;
-		}
-
-		if (!settingsChanged && !("brandWhitelist" in changes)) {
+		if (!settingsChanged && !whitelistChanged) {
 			return;
 		}
-
-		STATE.settings = sanitizeSettings(nextSettings);
 
 		if ("hideSponsoredResults" in changes) {
 			cache.sponsored = new WeakMap();
@@ -1013,6 +1046,35 @@ function observeSettingsChanges() {
 
 		scheduleApply({ fullRefresh: true });
 	});
+}
+
+function applyStoredSettingsChanges(changes) {
+	const nextSettings = { ...STATE.settings };
+	let settingsChanged = false;
+
+	for (const key of Object.keys(DEFAULT_SETTINGS)) {
+		if (!(key in changes)) {
+			continue;
+		}
+
+		nextSettings[key] = changes[key].newValue;
+		settingsChanged = true;
+	}
+
+	STATE.settings = sanitizeSettings(nextSettings);
+	return settingsChanged;
+}
+
+function applyStoredWhitelistChanges(changes) {
+	if (!("brandWhitelist" in changes)) {
+		return false;
+	}
+
+	STATE.brandWhitelist = normalizeBrandWhitelist(
+		changes.brandWhitelist.newValue,
+	);
+	STATE.brandIndex = null;
+	return true;
 }
 
 function registerMessageHandlers() {
@@ -1028,6 +1090,51 @@ function registerMessageHandlers() {
 	);
 }
 
+function disableProductFiltering() {
+	disconnectBootstrapObserver();
+	resetProductFilters();
+	disconnectResultsObserver();
+}
+
+function handleMissingResultsContainer() {
+	if (isSearchPageUrl()) {
+		ensureBootstrapObserver();
+	} else {
+		disconnectBootstrapObserver();
+	}
+
+	updatePageStatus({
+		enabled: true,
+		supportedPage: false,
+	});
+	notifyBadgeCount();
+	disconnectResultsObserver();
+}
+
+function applyResultsContainerFilters(container, shouldRunFullRefresh) {
+	ensureResultsObserver(container);
+
+	if (shouldRunFullRefresh || !STATE.pageStatus.lastUpdatedAt) {
+		applyProductFiltersToCards(getSearchResultCards(container));
+	}
+
+	if (!STATE.settings.hideSponsoredResults) {
+		clearSponsoredModuleState();
+	}
+
+	applyStandaloneSponsoredBlocks(container);
+	refreshPageSummary(container);
+}
+
+function finishApplyFilters() {
+	STATE.isApplying = false;
+
+	if (STATE.rerunRequested || STATE.rerunFullRefresh) {
+		STATE.rerunRequested = false;
+		scheduleApply({ fullRefresh: STATE.rerunFullRefresh });
+	}
+}
+
 async function applyFilters() {
 	if (STATE.isApplying) {
 		STATE.rerunRequested = true;
@@ -1040,9 +1147,7 @@ async function applyFilters() {
 
 	try {
 		if (!STATE.settings.enabled) {
-			disconnectBootstrapObserver();
-			resetProductFilters();
-			disconnectResultsObserver();
+			disableProductFiltering();
 			return;
 		}
 
@@ -1055,40 +1160,13 @@ async function applyFilters() {
 		const container = findResultsContainer();
 
 		if (!container) {
-			if (isSearchPageUrl()) {
-				ensureBootstrapObserver();
-			} else {
-				disconnectBootstrapObserver();
-			}
-
-			updatePageStatus({
-				enabled: true,
-				supportedPage: false,
-			});
-			notifyBadgeCount();
-			disconnectResultsObserver();
+			handleMissingResultsContainer();
 			return;
 		}
 
-		ensureResultsObserver(container);
-
-		if (shouldRunFullRefresh || !STATE.pageStatus.lastUpdatedAt) {
-			applyProductFiltersToCards(getSearchResultCards(container));
-		}
-
-		if (!STATE.settings.hideSponsoredResults) {
-			clearSponsoredModuleState();
-		}
-
-		applyStandaloneSponsoredBlocks(container);
-		refreshPageSummary(container);
+		applyResultsContainerFilters(container, shouldRunFullRefresh);
 	} finally {
-		STATE.isApplying = false;
-
-		if (STATE.rerunRequested || STATE.rerunFullRefresh) {
-			STATE.rerunRequested = false;
-			scheduleApply({ fullRefresh: STATE.rerunFullRefresh });
-		}
+		finishApplyFilters();
 	}
 }
 
