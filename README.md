@@ -9,21 +9,11 @@ A Firefox extension that cleans up Amazon search results:
 
 ## Install
 
-### Firefox (temporary, for testing)
+Install Review Rank from Mozilla Add-ons:
 
-1. Open `about:debugging` in Firefox
-2. Click **This Firefox** → **Load Temporary Add-on...**
-3. Select `manifest.json` from this folder
+https://addons.mozilla.org/firefox/addon/review-rank/
 
-### Firefox for Android
-
-Load via Firefox's extension collection or developer tooling.
-
-### Chrome / Chromium
-
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked** and select this folder
+Open the listing in Firefox and click **Add to Firefox**.
 
 ## Popup Controls
 
