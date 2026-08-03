@@ -19,6 +19,13 @@ npm run format   # Biome format --write
 | `prime-rank-shared.js` | All contexts | Shared UMD module (settings defaults, parsing helpers, storage keys) |
 | `amazon-brand-whitelist.js` | All contexts | Bundled whitelist snapshot (auto-excluded from Biome formatting) |
 
+## Claude Code automations (`.claude/`)
+
+- **Hooks block some edits**: `.claude/hooks/guard.mjs` (PreToolUse) refuses edits to `*.zip` and `.env` — that's intentional, not a tool failure. `format.mjs` (PostToolUse) formats only the edited file; `verify.mjs` (Stop) runs `npm test` and blocks finishing on a failure.
+- **Hook contract**: hooks read tool data as JSON on **stdin** (`tool_input.file_path`). There is no `CLAUDE_TOOL_INPUT_FILE_PATH` env var — using one silently expands to empty.
+- **Skills**: `/package` builds the ZIP; `/submit` does the full release (bump → verify → package → AMO upload → tag). Both are user-invoked only.
+- **Agents**: `extension-reviewer` (AMO policy), `privacy-guard` (enforces `data_collection: ["none"]`), `selector-drift-auditor` (Amazon DOM fragility + locale coverage).
+
 ## Gotchas
 
 - **Firefox MV3 compat**: `manifest.json` lists both `background.scripts` (Firefox) and `background.service_worker` (Chrome). Keep both.
