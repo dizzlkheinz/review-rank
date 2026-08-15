@@ -4,8 +4,8 @@
 		"includes": [
 			"**",
 			"!amazon-brand-whitelist.js",
-			"!graphify-out/**",
-			"!web-ext-artifacts/**",
+			"!graphify-out",
+			"!web-ext-artifacts",
 			"!!icons"
 		]
 	},
