@@ -50,7 +50,7 @@ This uploads publicly to addons.mozilla.org. **Confirm with the user before runn
 ```powershell
 $env:AMO_JWT_ISSUER = (Select-String -Path .env -Pattern "^AMO_JWT_ISSUER=`"(.*)`"").Matches.Groups[1].Value
 $env:AMO_JWT_SECRET = (Select-String -Path .env -Pattern "^AMO_JWT_SECRET=`"(.*)`"").Matches.Groups[1].Value
-npx web-ext submit --api-key=$env:AMO_JWT_ISSUER --api-secret=$env:AMO_JWT_SECRET
+npx web-ext sign --api-key=$env:AMO_JWT_ISSUER --api-secret=$env:AMO_JWT_SECRET --channel=listed
 ```
 
 Never echo the key values into the transcript.
