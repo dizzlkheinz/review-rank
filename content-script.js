@@ -2,13 +2,16 @@ const extensionApi = globalThis.browser ?? globalThis.chrome;
 const {
 	DEFAULT_SETTINGS,
 	DEFAULT_STORAGE_STATE,
+	PRIME_TOKEN_KEYS,
 	buildBrandIndex,
 	buildCanonicalSearchUrl,
 	extractPrimeTokensFromText,
 	matchWhitelistedBrand,
 	matchesSponsoredLabelText,
 	normalizeBrandWhitelist,
+	normalizePrimeTokenMap,
 	parseRatingsCountFromTexts,
+	resolvePrimeTokenForHost,
 	sanitizeSettings,
 } = globalThis.PrimeRankShared;
 
@@ -45,13 +48,6 @@ const BRAND_TEXT_SELECTORS = [
 	"[data-cy='brand'] span",
 	".a-size-base.a-color-secondary",
 ];
-const PRIME_TOKEN_ATTRIBUTE_SELECTOR = [
-	"a[href*='p_85']",
-	"[data-url*='p_85']",
-	"[data-query*='p_85']",
-	"[data-a-modal*='p_85']",
-	"input[value*='p_85']",
-].join(", ");
 const PRIME_TOKEN_ATTRIBUTE_NAMES = [
 	"href",
 	"data-url",
@@ -59,6 +55,13 @@ const PRIME_TOKEN_ATTRIBUTE_NAMES = [
 	"data-a-modal",
 	"value",
 ];
+const PRIME_TOKEN_ATTRIBUTE_SELECTOR = PRIME_TOKEN_KEYS.flatMap((key) => [
+	`a[href*='${key}']`,
+	`[data-url*='${key}']`,
+	`[data-query*='${key}']`,
+	`[data-a-modal*='${key}']`,
+	`input[value*='${key}']`,
+]).join(", ");
 const PRIME_TOKEN_SCRIPT_SCAN_LIMIT = 350_000;
 const SPONSORED_LABEL_SELECTORS = [
 	".puis-sponsored-label-text",
@@ -141,6 +144,7 @@ const STATE = {
 	locationHref: window.location.href,
 	primeTokenHref: "",
 	primeTokenValue: "",
+	primeTokensByHost: {},
 	pageStatus: createDefaultPageStatus(),
 };
 
@@ -157,6 +161,7 @@ function createDefaultPageStatus() {
 		hiddenSponsoredModules: 0,
 		minimumRatings: DEFAULT_SETTINGS.minimumRatings,
 		useBrandWhitelist: DEFAULT_SETTINGS.useBrandWhitelist,
+		enforcePrime: DEFAULT_SETTINGS.enforcePrime,
 		hideSponsoredResults: DEFAULT_SETTINGS.hideSponsoredResults,
 		whitelistAvailable: false,
 		whitelistCount: 0,
@@ -370,6 +375,39 @@ function getHighestScoredPrimeToken(scoresByToken) {
 	return resolvedPrimeToken;
 }
 
+function getPageHostname() {
+	try {
+		return new URL(window.location.href).hostname;
+	} catch {
+		return "";
+	}
+}
+
+// Amazon only renders its Prime refinement link on pages that offer the facet.
+// Remembering the token per marketplace lets narrower pages (seller-filtered
+// results, for example) keep Prime enforcement instead of silently dropping it.
+function learnPrimeToken(token) {
+	const host = getPageHostname();
+
+	if (!host || STATE.primeTokensByHost[host] === token) {
+		return;
+	}
+
+	const nextTokens = normalizePrimeTokenMap({
+		...STATE.primeTokensByHost,
+		[host]: token,
+	});
+
+	if (!nextTokens[host]) {
+		return;
+	}
+
+	STATE.primeTokensByHost = nextTokens;
+	extensionApi.storage.local
+		.set({ primeTokensByHost: nextTokens })
+		.catch(() => {});
+}
+
 function resolvePrimeToken() {
 	if (STATE.primeTokenHref === window.location.href && STATE.primeTokenValue) {
 		return STATE.primeTokenValue;
@@ -384,11 +422,28 @@ function resolvePrimeToken() {
 		addInlineScriptPrimeTokenCandidates(scoresByToken);
 	}
 
-	const resolvedPrimeToken = getHighestScoredPrimeToken(scoresByToken);
+	const pagePrimeToken = getHighestScoredPrimeToken(scoresByToken);
+
+	if (pagePrimeToken) {
+		learnPrimeToken(pagePrimeToken);
+	}
+
+	const resolvedPrimeToken =
+		pagePrimeToken ||
+		resolvePrimeTokenForHost(getPageHostname(), STATE.primeTokensByHost);
+
 	STATE.primeTokenHref = window.location.href;
 	STATE.primeTokenValue = resolvedPrimeToken;
 
 	return resolvedPrimeToken;
+}
+
+function getPrimeStatus(enforcePrime, canonicalUrl) {
+	if (!enforcePrime) {
+		return canonicalUrl.primeEnforced ? "page-filtered" : "disabled";
+	}
+
+	return canonicalUrl.missingPrimeToken ? "missing-token" : "enforced";
 }
 
 function ensureCanonicalSearchUrl() {
@@ -407,13 +462,16 @@ function ensureCanonicalSearchUrl() {
 		return false;
 	}
 
+	const enforcePrime = STATE.settings.enforcePrime;
 	const canonicalUrl = buildCanonicalSearchUrl(window.location.href, {
-		primeToken: resolvePrimeToken(),
+		primeToken: enforcePrime ? resolvePrimeToken() : "",
+		enforcePrime,
 	});
 
 	updatePageStatus({
 		supportedPage: true,
-		primeStatus: canonicalUrl.missingPrimeToken ? "missing-token" : "enforced",
+		enforcePrime,
+		primeStatus: getPrimeStatus(enforcePrime, canonicalUrl),
 		sortStatus: "review-rank",
 	});
 
@@ -759,6 +817,7 @@ function refreshPageSummary(container = findResultsContainer()) {
 		enabled: STATE.settings.enabled,
 		supportedPage: isFilterableResultsPage(container),
 		minimumRatings: STATE.settings.minimumRatings,
+		enforcePrime: STATE.settings.enforcePrime,
 		useBrandWhitelist: STATE.settings.useBrandWhitelist,
 		hideSponsoredResults: STATE.settings.hideSponsoredResults,
 		whitelistAvailable: whitelistCount > 0,
@@ -1031,8 +1090,9 @@ function observeSettingsChanges() {
 
 		const settingsChanged = applyStoredSettingsChanges(changes);
 		const whitelistChanged = applyStoredWhitelistChanges(changes);
+		const primeTokensChanged = applyStoredPrimeTokenChanges(changes);
 
-		if (!settingsChanged && !whitelistChanged) {
+		if (!settingsChanged && !whitelistChanged && !primeTokensChanged) {
 			return;
 		}
 
@@ -1074,6 +1134,18 @@ function applyStoredWhitelistChanges(changes) {
 		changes.brandWhitelist.newValue,
 	);
 	STATE.brandIndex = null;
+	return true;
+}
+
+function applyStoredPrimeTokenChanges(changes) {
+	if (!("primeTokensByHost" in changes)) {
+		return false;
+	}
+
+	STATE.primeTokensByHost = normalizePrimeTokenMap(
+		changes.primeTokensByHost.newValue,
+	);
+	resetPrimeTokenCache();
 	return true;
 }
 
@@ -1178,6 +1250,9 @@ async function init() {
 
 	STATE.settings = sanitizeSettings(storedValues);
 	STATE.brandWhitelist = normalizeBrandWhitelist(storedValues.brandWhitelist);
+	STATE.primeTokensByHost = normalizePrimeTokenMap(
+		storedValues.primeTokensByHost,
+	);
 
 	observeSettingsChanges();
 	observeNavigationChanges();

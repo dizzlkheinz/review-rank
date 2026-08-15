@@ -3,6 +3,7 @@ const { DEFAULT_SETTINGS, sanitizeSettings } = globalThis.PrimeRankShared;
 
 const elements = {
 	enabled: document.getElementById("enabled"),
+	enforcePrime: document.getElementById("enforcePrime"),
 	minimumRatings: document.getElementById("minimumRatings"),
 	hideSponsoredResults: document.getElementById("hideSponsoredResults"),
 	useBrandWhitelist: document.getElementById("useBrandWhitelist"),
@@ -46,6 +47,7 @@ function formatTimestamp(timestamp) {
 
 function renderSettings(settings) {
 	elements.enabled.checked = settings.enabled;
+	elements.enforcePrime.checked = settings.enforcePrime;
 	elements.minimumRatings.value = String(settings.minimumRatings);
 	elements.hideSponsoredResults.checked = settings.hideSponsoredResults;
 	elements.useBrandWhitelist.checked = settings.useBrandWhitelist;
@@ -57,6 +59,9 @@ function renderSettingsStatus(settings, prefix = "Saved") {
 		return;
 	}
 
+	const primeStatus = settings.enforcePrime
+		? "Prime-only on"
+		: "Prime-only off";
 	const sponsoredStatus = settings.hideSponsoredResults
 		? "sponsored blocking on"
 		: "sponsored blocking off";
@@ -65,12 +70,13 @@ function renderSettingsStatus(settings, prefix = "Saved") {
 		: "brand whitelist off";
 	elements.status.textContent =
 		`${prefix}: hide products under ${settings.minimumRatings} reviews · ` +
-		`${sponsoredStatus} · ${whitelistStatus}.`;
+		`${primeStatus} · ${sponsoredStatus} · ${whitelistStatus}.`;
 }
 
 function collectSettings() {
 	return sanitizeSettings({
 		enabled: elements.enabled.checked,
+		enforcePrime: elements.enforcePrime.checked,
 		minimumRatings: elements.minimumRatings.value,
 		hideSponsoredResults: elements.hideSponsoredResults.checked,
 		useBrandWhitelist: elements.useBrandWhitelist.checked,
@@ -155,6 +161,14 @@ function getPageStatusDetails(pageStatus) {
 }
 
 function getPrimeStatusText(pageStatus) {
+	if (pageStatus.primeStatus === "disabled") {
+		return "Prime-only filtering off.";
+	}
+
+	if (pageStatus.primeStatus === "page-filtered") {
+		return "Prime-only filtering off; Amazon's Prime filter is still in this URL.";
+	}
+
 	return pageStatus.primeStatus === "missing-token"
 		? "Prime filter unavailable on this page."
 		: "Prime filter enforced.";
@@ -316,6 +330,7 @@ async function init() {
 	renderSettingsStatus(currentSettings, "Loaded");
 
 	elements.enabled.addEventListener("change", persistSettings);
+	elements.enforcePrime.addEventListener("change", persistSettings);
 	elements.minimumRatings.addEventListener("change", persistSettings);
 	elements.minimumRatings.addEventListener("blur", persistSettings);
 	elements.hideSponsoredResults.addEventListener("change", persistSettings);

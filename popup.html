@@ -12,7 +12,7 @@
         <p class="eyebrow">Amazon Search Controls</p>
         <h1>Review Rank</h1>
         <p class="summary">
-          Prime-only and review-rank sorting are enforced automatically when the extension is enabled.
+          Review-rank sorting is enforced automatically; Prime-only filtering is a toggle below.
         </p>
       </header>
 
@@ -23,6 +23,14 @@
             <span class="hint" id="enabledHint">Changes apply immediately. Turning this on may redirect the current Amazon search page once.</span>
           </span>
           <input id="enabled" name="enabled" type="checkbox" aria-describedby="enabledHint">
+        </label>
+
+        <label class="toggle" for="enforcePrime">
+          <span class="toggle-copy">
+            <span class="label">Prime results only</span>
+            <span class="hint" id="enforcePrimeHint">Adds Amazon's Prime filter to search URLs, including seller-filtered pages where Amazon hides the filter. Turning this off stops adding it; reload the search to drop the filter Amazon already applied.</span>
+          </span>
+          <input id="enforcePrime" name="enforcePrime" type="checkbox" aria-describedby="enforcePrimeHint">
         </label>
 
         <label class="field" for="minimumRatings">

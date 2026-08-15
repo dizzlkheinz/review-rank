@@ -32,7 +32,7 @@ npm run format   # Biome format --write
 - **Shared module pattern**: `prime-rank-shared.js` uses a UMD IIFE that attaches to `globalThis.PrimeRankShared`. Import via `importScripts` in the service worker and via `<script>` in popup — not ES modules.
 - **`amazon-brand-whitelist.js` is generated**: Do not hand-edit. It is excluded from Biome formatting in `biome.json`.
 - **No host_permissions for Amazon domains**: Content scripts are declared in manifest; no broad host permissions needed. The only external request is to `raw.githubusercontent.com` (already in `host_permissions`).
-- **Prime token**: Prime enforcement only works when Amazon exposes a `p_85:…` facet token in the page URL/DOM. Missing token = feature silently skipped, reported in popup.
+- **Prime token**: Prime enforcement appends Amazon's own Prime refinement to the URL. The key differs per marketplace (`p_85` on `.ca`/`.com`, two OR-joined `p_n_prime_domestic` values on `.com.mx`), so `PRIME_TOKEN_KEYS` drives both the regexes and the DOM selectors. `PRIME_TOKEN_FALLBACKS` entries MUST be measured against the live marketplace first: a foreign or invalid token makes Amazon discard every sibling refinement (widening results). Tokens seen in a page are learned into `primeTokensByHost` for marketplaces with no bundled entry. The `enforcePrime` setting gates the whole path; off means the extension never adds the facet (it never strips one Amazon or the user applied).
 - **Linter globals**: `browser` and `chrome` are declared as globals in `biome.json` — don't remove them.
 
 ## Testing

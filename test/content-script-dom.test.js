@@ -189,6 +189,19 @@ async function runContentScript(options = {}) {
 	return env;
 }
 
+function getPageStatus(env) {
+	return new Promise((resolve, reject) => {
+		if (!env.runtimeMessageListeners.length) {
+			reject(new Error("content script registered no message handler"));
+			return;
+		}
+
+		for (const listener of env.runtimeMessageListeners) {
+			listener({ type: "prime-rank-filter:get-page-status" }, {}, resolve);
+		}
+	});
+}
+
 function normalizeSelectors(selectors) {
 	return Array.isArray(selectors) ? selectors : [selectors];
 }
@@ -675,4 +688,60 @@ test("content script re-evaluates a card when aria-label becomes sponsored", asy
 		"aria-label mutation should trigger sponsored re-evaluation",
 	);
 	assert.ok(card.dataset.primeRankHiddenReasons.includes("sponsored"));
+});
+
+const SELLER_FILTERED_CA_URL =
+	"https://www.amazon.ca/s?k=goartea&i=grocery&rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3&s=review-rank";
+
+test("content script enforces the measured prime facet on a seller-filtered page", async () => {
+	const env = await runContentScript({ url: SELLER_FILTERED_CA_URL });
+
+	assert.equal(env.replacedUrls.length, 1, "page should be redirected once");
+	assert.match(env.replacedUrls[0], /p_85%3A5690392011/);
+	assert.match(
+		env.replacedUrls[0],
+		/rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3%2Cp_85%3A5690392011/,
+		"existing category and seller refinements survive",
+	);
+});
+
+test("content script leaves urls alone when prime enforcement is off", async () => {
+	const env = await runContentScript({
+		url: SELLER_FILTERED_CA_URL,
+		storage: { enforcePrime: false },
+	});
+
+	assert.deepEqual(env.replacedUrls, [], "no redirect without a prime facet");
+
+	const status = await getPageStatus(env);
+	assert.equal(status.primeStatus, "disabled");
+	assert.equal(status.enforcePrime, false);
+});
+
+test("content script learns a marketplace prime token from Amazon's own refinement link", async () => {
+	const primeRefinementLink =
+		'<a href="/s?k=kaffee&rh=n%3A340846031%2Cp_85%3A20943776031&ref=sr_nr_p_85_1">Prime</a>';
+	const env = await runContentScript({
+		html: `${primeRefinementLink}${fixtureHtml}`,
+		url: "https://www.amazon.de/s?k=kaffee&s=review-rank",
+	});
+
+	assert.deepEqual(env.storageData.primeTokensByHost, {
+		"www.amazon.de": "p_85:20943776031",
+	});
+	assert.equal(env.replacedUrls.length, 1);
+	assert.match(env.replacedUrls[0], /rh=p_85%3A20943776031/);
+});
+
+test("content script reuses a learned token where Amazon hides the prime facet", async () => {
+	const env = await runContentScript({
+		url: "https://www.amazon.de/s?k=kaffee&i=grocery&rh=p_6%3AA2HMM5KJS65BH3&s=review-rank",
+		storage: { primeTokensByHost: { "www.amazon.de": "p_85:20943776031" } },
+	});
+
+	assert.equal(env.replacedUrls.length, 1);
+	assert.match(
+		env.replacedUrls[0],
+		/rh=p_6%3AA2HMM5KJS65BH3%2Cp_85%3A20943776031/,
+	);
 });

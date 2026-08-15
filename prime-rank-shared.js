@@ -11,6 +11,7 @@
 	function createPrimeRankShared() {
 		const DEFAULT_SETTINGS = Object.freeze({
 			enabled: true,
+			enforcePrime: true,
 			minimumRatings: 100,
 			useBrandWhitelist: false,
 			hideSponsoredResults: true,
@@ -18,6 +19,7 @@
 
 		const DEFAULT_STORAGE_STATE = Object.freeze({
 			brandWhitelist: [],
+			primeTokensByHost: {},
 			brandWhitelistFetchedAt: 0,
 			brandWhitelistSource: "unavailable",
 			brandWhitelistLastAttemptAt: 0,
@@ -26,7 +28,35 @@
 		});
 
 		const BRAND_WHITELIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-		const PRIME_TOKEN_PATTERN = /p_85:[^,&#"'\\\s)]+/g;
+		// Amazon does not use one Prime refinement key everywhere: amazon.ca and
+		// amazon.com expose p_85, while amazon.com.mx splits Prime into two values
+		// of p_n_prime_domestic. Several values of one key are OR-joined with "|".
+		const PRIME_TOKEN_KEYS = Object.freeze(["p_85", "p_n_prime_domestic"]);
+		const PRIME_TOKEN_PATTERN = /(?:p_85|p_n_prime_domestic):[^,&#"'\\\s)]+/g;
+		const PRIME_TOKEN_VALUE_PATTERN =
+			/^(?:p_85|p_n_prime_domestic):[0-9A-Za-z]+(?:\|[0-9A-Za-z]+)*$/;
+		const PRIME_TOKEN_HOST_PATTERN =
+			/^(?:[a-z0-9-]+\.)*amazon\.[a-z]{2,3}(?:\.[a-z]{2,3})?$/;
+		// Every entry was measured against the live marketplace on 2026-08-15:
+		//   amazon.ca    /s?k=goartea&i=grocery&rh=n:6967215011,p_6:A2HMM5KJS65BH3
+		//                86 results -> 3, category and seller refinements intact.
+		//   amazon.com   /s?k=poly+bags&rh=n:8553197011
+		//                4,000+ results -> 1, category refinement intact.
+		//   amazon.com.mx /s?k=ink
+		//                422 results -> 275. Both p_n_prime_domestic values are
+		//                Prime (domestic and global), so enforcement keeps the
+		//                union instead of guessing which half the user wants.
+		// Tokens are marketplace-specific and a foreign or invalid token is
+		// destructive: Amazon then discards every sibling refinement (amazon.ca's
+		// token on amazon.com widened 4,000 -> 10,000 results, exactly like the
+		// bogus token p_85:999999999). Only measured hosts may be listed here;
+		// other marketplaces learn their token from Amazon's own Prime refinement
+		// link at runtime.
+		const PRIME_TOKEN_FALLBACKS = Object.freeze({
+			"www.amazon.ca": "p_85:5690392011",
+			"www.amazon.com": "p_85:2470955011",
+			"www.amazon.com.mx": "p_n_prime_domestic:217698801011|217698802011",
+		});
 		const BRAND_PREFIX_PATTERN = /^(brand|marque|marca|marke|visit the|by)\s+/;
 		const BRAND_SUFFIX_PATTERN = /\s+store$/;
 		const COUNT_KEYWORD_PATTERN =
@@ -48,6 +78,7 @@
 		function sanitizeSettings(rawSettings = {}) {
 			return {
 				enabled: rawSettings.enabled !== false,
+				enforcePrime: rawSettings.enforcePrime !== false,
 				minimumRatings: normalizeMinimumRatings(rawSettings.minimumRatings),
 				useBrandWhitelist: rawSettings.useBrandWhitelist === true,
 				hideSponsoredResults: rawSettings.hideSponsoredResults !== false,
@@ -335,12 +366,79 @@
 			);
 		}
 
+		// Amazon writes refinements percent-encoded inside hrefs
+		// (rh=n%3A123%2Cp_85%3A456), plain inside inline scripts, and sometimes
+		// double-encoded after its own server-side redirect (amazon.com.mx rewrites
+		// the multi-value separator %7C to %257C), so every form has to survive
+		// extraction.
+		function decodeRefinementText(text) {
+			return String(text ?? "")
+				.replace(/%(?:25)?3A/gi, ":")
+				.replace(/%(?:25)?7C/gi, "|");
+		}
+
 		function extractPrimeTokensFromText(text) {
-			return uniq(String(text ?? "").match(PRIME_TOKEN_PATTERN) || []);
+			return uniq(
+				decodeRefinementText(text).match(PRIME_TOKEN_PATTERN) || [],
+			).filter(isPrimeTokenValue);
+		}
+
+		function isPrimeTokenValue(value) {
+			return PRIME_TOKEN_VALUE_PATTERN.test(String(value ?? "").trim());
+		}
+
+		function isPrimeRefinementToken(token) {
+			return PRIME_TOKEN_KEYS.some((key) =>
+				String(token ?? "").startsWith(`${key}:`),
+			);
+		}
+
+		function normalizePrimeTokenHost(value) {
+			const host = String(value ?? "")
+				.trim()
+				.toLowerCase();
+
+			return PRIME_TOKEN_HOST_PATTERN.test(host) ? host : "";
+		}
+
+		function normalizePrimeTokenMap(rawMap) {
+			const normalizedMap = {};
+
+			if (!rawMap || typeof rawMap !== "object") {
+				return normalizedMap;
+			}
+
+			for (const [rawHost, rawToken] of Object.entries(rawMap)) {
+				const host = normalizePrimeTokenHost(rawHost);
+				const token = String(rawToken ?? "").trim();
+
+				if (host && isPrimeTokenValue(token)) {
+					normalizedMap[host] = token;
+				}
+			}
+
+			return normalizedMap;
+		}
+
+		function resolvePrimeTokenForHost(hostname, learnedTokens) {
+			const host = normalizePrimeTokenHost(hostname);
+
+			if (!host) {
+				return "";
+			}
+
+			const learnedToken = String(learnedTokens?.[host] ?? "").trim();
+
+			if (isPrimeTokenValue(learnedToken)) {
+				return learnedToken;
+			}
+
+			return PRIME_TOKEN_FALLBACKS[host] || "";
 		}
 
 		function buildCanonicalSearchUrl(currentUrl, options = {}) {
 			const url = new URL(String(currentUrl));
+			const enforcePrime = options.enforcePrime !== false;
 			const primeToken = String(options.primeToken ?? "").trim();
 			let changed = false;
 
@@ -350,11 +448,11 @@
 			}
 
 			const rhTokens = splitRhTokens(url.searchParams.get("rh"));
-			const existingPrimeToken =
-				rhTokens.find((token) => token.startsWith("p_85:")) || "";
-			const resolvedPrimeToken = existingPrimeToken || primeToken;
+			const existingPrimeToken = rhTokens.find(isPrimeRefinementToken) || "";
+			const resolvedPrimeToken =
+				existingPrimeToken || (enforcePrime ? primeToken : "");
 
-			if (!existingPrimeToken && primeToken) {
+			if (enforcePrime && !existingPrimeToken && primeToken) {
 				rhTokens.push(primeToken);
 				url.searchParams.set("rh", splitRhTokens(rhTokens.join(",")).join(","));
 				changed = true;
@@ -364,7 +462,8 @@
 				url: url.toString(),
 				changed,
 				primeToken: resolvedPrimeToken,
-				missingPrimeToken: !resolvedPrimeToken,
+				primeEnforced: Boolean(resolvedPrimeToken),
+				missingPrimeToken: enforcePrime && !resolvedPrimeToken,
 			};
 		}
 
@@ -429,6 +528,8 @@
 			BRAND_WHITELIST_MAX_AGE_MS,
 			DEFAULT_SETTINGS,
 			DEFAULT_STORAGE_STATE,
+			PRIME_TOKEN_FALLBACKS,
+			PRIME_TOKEN_KEYS,
 			buildBrandIndex,
 			buildCanonicalSearchUrl,
 			extractPrimeTokensFromText,
@@ -437,8 +538,10 @@
 			normalizeBrandText,
 			normalizeBrandWhitelist,
 			normalizeMinimumRatings,
+			normalizePrimeTokenMap,
 			parseBrandWhitelist,
 			parseRatingsCountFromTexts,
+			resolvePrimeTokenForHost,
 			sanitizeSettings,
 			shouldRefreshBrandWhitelist,
 			splitRhTokens,

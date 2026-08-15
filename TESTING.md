@@ -7,6 +7,10 @@
 - Open the popup from the toolbar and confirm current-page status updates without console errors.
 - Enable `Hide sponsored results` and verify sponsored cards/modules disappear on a page like:
   `https://www.amazon.ca/s?k=litter+box&i=pets&rh=n%3A6205514011%2Cp_85%3A5690392011&s=review-rank`
+- Open a seller-filtered page where Amazon hides its Prime facet and confirm the extension still appends it:
+  `https://www.amazon.ca/s?k=goartea&i=grocery&rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3&s=review-rank`
+  (86 results without the facet, 3 with it; the category and seller refinements must survive).
+- Turn `Prime results only` off, reload that search, and confirm the URL keeps the seller refinement without a Prime facet and the popup reports `Prime-only filtering off.`
 - Change the minimum ratings threshold and confirm low-review products are hidden.
 - Enable the brand whitelist and confirm non-allowlisted brands are hidden.
 - Use the popup refresh action and confirm the whitelist metadata updates.
