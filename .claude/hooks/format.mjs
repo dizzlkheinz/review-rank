@@ -1,7 +1,7 @@
-// PostToolUse(Edit|Write): format only the file that was just edited.
-// Claude Code passes tool data as JSON on stdin — there is no
-// CLAUDE_TOOL_INPUT_FILE_PATH env var. Reading stdin is the only way to get the path.
+// PostToolUse(Edit|Write|apply_patch): format only files changed by the tool.
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { affectedPaths, parseHookPayload } from "./tool-paths.mjs";
 
 let raw = "";
 process.stdin.on("data", (chunk) => {
@@ -9,23 +9,19 @@ process.stdin.on("data", (chunk) => {
 });
 
 process.stdin.on("end", () => {
-	let filePath = "";
-	try {
-		filePath = JSON.parse(raw || "{}").tool_input?.file_path ?? "";
-	} catch {
-		process.exit(0);
+	for (const filePath of affectedPaths(parseHookPayload(raw))) {
+		const normalized = filePath.replace(/\\/g, "/");
+		if (!/\.(js|mjs|json|jsonc|css|html)$/.test(normalized)) continue;
+		// Generated snapshot — excluded from Biome formatting in biome.json.
+		if (normalized.endsWith("amazon-brand-whitelist.js")) continue;
+		// Deleted and moved-from files no longer exist after apply_patch.
+		if (!existsSync(filePath)) continue;
+
+		spawnSync("npx", ["biome", "format", "--write", filePath], {
+			stdio: "inherit",
+			shell: true,
+		});
 	}
-
-	const normalized = filePath.replace(/\\/g, "/");
-	if (!normalized) process.exit(0);
-	if (!/\.(js|mjs|json|jsonc|css|html)$/.test(normalized)) process.exit(0);
-	// Generated snapshot — excluded from Biome formatting in biome.json.
-	if (normalized.endsWith("amazon-brand-whitelist.js")) process.exit(0);
-
-	spawnSync("npx", ["biome", "format", "--write", filePath], {
-		stdio: "inherit",
-		shell: true,
-	});
 	// Never block the edit on a formatter failure.
 	process.exit(0);
 });
