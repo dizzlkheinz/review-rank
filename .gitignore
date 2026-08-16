@@ -1,3 +1,9 @@
 node_modules/
 .env
 review-rank-*.zip
+web-ext-artifacts/
+.amo-upload-uuid
+.antigravitycli/
+.DS_Store
+Thumbs.db
+
