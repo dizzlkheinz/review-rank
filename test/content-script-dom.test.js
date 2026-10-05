@@ -711,7 +711,11 @@ test("content script leaves urls alone when prime enforcement is off", async () 
 		storage: { enforcePrime: false },
 	});
 
-	assert.deepEqual(env.replacedUrls, [], "no redirect without a prime facet");
+	assert.deepEqual(
+		env.replacedUrls,
+		[],
+		"no redirect when the page has no Prime facet",
+	);
 
 	const status = await getPageStatus(env);
 	assert.equal(status.primeStatus, "disabled");
@@ -744,4 +748,82 @@ test("content script reuses a learned token where Amazon hides the prime facet",
 		env.replacedUrls[0],
 		/rh=p_6%3AA2HMM5KJS65BH3%2Cp_85%3A20943776031/,
 	);
+});
+
+test("content script keeps a Prime facet already present when enforcement starts off", async () => {
+	const env = await runContentScript({
+		url: "https://www.amazon.ca/s?k=goartea&s=review-rank&rh=n%3A6967215011%2Cp_85%3A5690392011",
+		storage: { enforcePrime: false },
+	});
+
+	assert.deepEqual(
+		env.replacedUrls,
+		[],
+		"steady disabled state leaves manually chosen facet intact",
+	);
+
+	const status = await getPageStatus(env);
+	assert.equal(status.primeStatus, "page-filtered");
+	assert.equal(status.enforcePrime, false);
+});
+
+test("content script auto-reloads to drop prime facet when enforcePrime is toggled off in storage", async () => {
+	const env = await runContentScript({
+		url: "https://www.amazon.ca/s?k=goartea&i=grocery&rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3%2Cp_85%3A5690392011&s=review-rank",
+		storage: { enforcePrime: true },
+	});
+
+	assert.deepEqual(env.replacedUrls, [], "already has prime facet");
+
+	await env.extensionApi.storage.local.set({ enforcePrime: false });
+	await waitFor(200);
+
+	assert.equal(env.replacedUrls.length, 1, "auto-reloads to drop prime facet");
+	assert.equal(
+		env.replacedUrls[0],
+		"https://www.amazon.ca/s?k=goartea&i=grocery&rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3&s=review-rank",
+	);
+});
+
+test("content script removes the Mexico Prime choice without dropping other refinements", async () => {
+	const env = await runContentScript({
+		url: "https://www.amazon.com.mx/s?k=ink&i=office&rh=n%3A123%2Cp_n_prime_domestic%3A217698801011%7C217698802011%2Cp_6%3AA2HMM5KJS65BH3&s=review-rank",
+		storage: { enforcePrime: true },
+	});
+
+	await env.extensionApi.storage.local.set({ enforcePrime: false });
+	await waitFor(200);
+
+	assert.equal(env.replacedUrls.length, 1);
+	assert.equal(
+		env.replacedUrls[0],
+		"https://www.amazon.com.mx/s?k=ink&i=office&rh=n%3A123%2Cp_6%3AA2HMM5KJS65BH3&s=review-rank",
+	);
+});
+
+test("one-time transition cleanup does not remove a later manual Prime selection", async () => {
+	const env = await runContentScript({
+		url: "https://www.amazon.ca/s?k=goartea&s=review-rank&rh=n%3A6967215011%2Cp_85%3A5690392011",
+		storage: { enforcePrime: true },
+	});
+
+	await env.extensionApi.storage.local.set({ enforcePrime: false });
+	await waitFor(200);
+	assert.equal(
+		env.replacedUrls.length,
+		1,
+		"the transition removes the existing facet once",
+	);
+
+	env.window.location.href =
+		"https://www.amazon.ca/s?k=goartea&s=review-rank&rh=n%3A6967215011%2Cp_85%3A5690392011";
+	await env.extensionApi.storage.local.set({ minimumRatings: 250 });
+	await waitFor(200);
+
+	assert.equal(
+		env.replacedUrls.length,
+		1,
+		"a later settings update does not consume cleanup again",
+	);
+	assert.match(env.window.location.href, /p_85%3A5690392011/);
 });

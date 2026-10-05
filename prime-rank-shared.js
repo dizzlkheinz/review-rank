@@ -449,13 +449,30 @@
 
 			const rhTokens = splitRhTokens(url.searchParams.get("rh"));
 			const existingPrimeToken = rhTokens.find(isPrimeRefinementToken) || "";
-			const resolvedPrimeToken =
-				existingPrimeToken || (enforcePrime ? primeToken : "");
 
-			if (enforcePrime && !existingPrimeToken && primeToken) {
-				rhTokens.push(primeToken);
-				url.searchParams.set("rh", splitRhTokens(rhTokens.join(",")).join(","));
+			let resolvedPrimeToken = "";
+			if (enforcePrime) {
+				resolvedPrimeToken = existingPrimeToken || primeToken;
+				if (!existingPrimeToken && primeToken) {
+					rhTokens.push(primeToken);
+					url.searchParams.set(
+						"rh",
+						splitRhTokens(rhTokens.join(",")).join(","),
+					);
+					changed = true;
+				}
+			} else if (options.removePrime === true && existingPrimeToken) {
+				const remainingTokens = rhTokens.filter(
+					(token) => !isPrimeRefinementToken(token),
+				);
+				if (remainingTokens.length > 0) {
+					url.searchParams.set("rh", remainingTokens.join(","));
+				} else {
+					url.searchParams.delete("rh");
+				}
 				changed = true;
+			} else {
+				resolvedPrimeToken = existingPrimeToken;
 			}
 
 			return {

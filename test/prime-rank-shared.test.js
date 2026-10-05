@@ -161,15 +161,63 @@ test("buildCanonicalSearchUrl adds no prime token when enforcement is off", () =
 	);
 });
 
-test("buildCanonicalSearchUrl keeps Amazon's own prime facet when enforcement is off", () => {
+test("buildCanonicalSearchUrl preserves a manual prime facet when enforcement is off", () => {
 	const result = shared.buildCanonicalSearchUrl(
 		"https://www.amazon.ca/s?k=goartea&s=review-rank&rh=n%3A6967215011%2Cp_85%3A5690392011",
 		{ primeToken: "", enforcePrime: false },
 	);
 
-	assert.equal(result.changed, false);
+	assert.equal(result.changed, false, "manual facet remains in the url");
+	assert.equal(
+		result.url,
+		"https://www.amazon.ca/s?k=goartea&s=review-rank&rh=n%3A6967215011%2Cp_85%3A5690392011",
+	);
 	assert.equal(result.primeToken, "p_85:5690392011");
 	assert.equal(result.primeEnforced, true);
+});
+
+test("buildCanonicalSearchUrl removes prime facets only when explicitly requested", () => {
+	const result = shared.buildCanonicalSearchUrl(
+		"https://www.amazon.com.mx/s?k=ink&s=review-rank&rh=n%3A123%2Cp_n_prime_domestic%3A217698801011%7C217698802011%2Cp_6%3AA2HMM5KJS65BH3",
+		{
+			primeToken: "p_n_prime_domestic:217698801011|217698802011",
+			enforcePrime: false,
+			removePrime: true,
+		},
+	);
+
+	assert.equal(result.changed, true);
+	assert.equal(
+		result.url,
+		"https://www.amazon.com.mx/s?k=ink&s=review-rank&rh=n%3A123%2Cp_6%3AA2HMM5KJS65BH3",
+	);
+	assert.equal(result.primeToken, "");
+	assert.equal(result.primeEnforced, false);
+});
+
+test("buildCanonicalSearchUrl deletes rh when explicit removal drops its only facet", () => {
+	const result = shared.buildCanonicalSearchUrl(
+		"https://www.amazon.ca/s?k=goartea&s=review-rank&rh=p_85%3A5690392011",
+		{ primeToken: "p_85:5690392011", enforcePrime: false, removePrime: true },
+	);
+
+	assert.equal(result.changed, true);
+	assert.equal(result.url, "https://www.amazon.ca/s?k=goartea&s=review-rank");
+	assert.equal(result.primeToken, "");
+	assert.equal(result.primeEnforced, false);
+});
+
+test("buildCanonicalSearchUrl removes only the prime facet and preserves seller refinements", () => {
+	const result = shared.buildCanonicalSearchUrl(
+		"https://www.amazon.ca/s?k=goartea&i=grocery&rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3%2Cp_85%3A5690392011&s=review-rank",
+		{ primeToken: "p_85:5690392011", enforcePrime: false, removePrime: true },
+	);
+
+	assert.equal(result.changed, true);
+	assert.equal(
+		result.url,
+		"https://www.amazon.ca/s?k=goartea&i=grocery&rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3&s=review-rank",
+	);
 });
 
 test("buildCanonicalSearchUrl appends the prime facet to a seller-filtered page", () => {

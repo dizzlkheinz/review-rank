@@ -37,6 +37,8 @@ The only external network request the extension makes is to `raw.githubuserconte
 
 Prime-only filtering works by adding Amazon's own Prime refinement to the search URL, so Amazon does the filtering server-side.
 
+While the extension is enabled, turning `Prime results only` off removes the Prime facet from open searches and reloads them automatically. Afterward, you can select Prime on Amazon manually; the extension preserves that selection while its Prime setting is off.
+
 Amazon exposes that refinement inconsistently: `amazon.ca` and `amazon.com` use `p_85`, `amazon.com.mx` uses two `p_n_prime_domestic` values, and narrower pages (seller-filtered results, for example) omit the filter from the sidebar entirely. The extension therefore resolves the token in this order:
 
 1. a Prime facet already present in the URL,

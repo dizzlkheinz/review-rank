@@ -10,7 +10,8 @@
 - Open a seller-filtered page where Amazon hides its Prime facet and confirm the extension still appends it:
   `https://www.amazon.ca/s?k=goartea&i=grocery&rh=n%3A6967215011%2Cp_6%3AA2HMM5KJS65BH3&s=review-rank`
   (86 results without the facet, 3 with it; the category and seller refinements must survive).
-- Turn `Prime results only` off, reload that search, and confirm the URL keeps the seller refinement without a Prime facet and the popup reports `Prime-only filtering off.`
+- Turn `Prime results only` off, confirm the page auto-reloads to keep the seller refinement without a Prime facet, and the popup reports `Prime-only filtering off.`
+- With `Prime results only` still off, select Prime on Amazon and confirm the selection survives navigation and changes to the minimum review count.
 - Change the minimum ratings threshold and confirm low-review products are hidden.
 - Enable the brand whitelist and confirm non-allowlisted brands are hidden.
 - Use the popup refresh action and confirm the whitelist metadata updates.

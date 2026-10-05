@@ -145,6 +145,7 @@ const STATE = {
 	primeTokenHref: "",
 	primeTokenValue: "",
 	primeTokensByHost: {},
+	removePrimeAtUrl: "",
 	pageStatus: createDefaultPageStatus(),
 };
 
@@ -448,6 +449,7 @@ function getPrimeStatus(enforcePrime, canonicalUrl) {
 
 function ensureCanonicalSearchUrl() {
 	if (!isFilterableResultsPage()) {
+		STATE.removePrimeAtUrl = "";
 		updatePageStatus({
 			supportedPage: false,
 			primeStatus: "not-search-page",
@@ -463,9 +465,12 @@ function ensureCanonicalSearchUrl() {
 	}
 
 	const enforcePrime = STATE.settings.enforcePrime;
+	const removePrime = STATE.removePrimeAtUrl === window.location.href;
+	STATE.removePrimeAtUrl = "";
 	const canonicalUrl = buildCanonicalSearchUrl(window.location.href, {
 		primeToken: enforcePrime ? resolvePrimeToken() : "",
 		enforcePrime,
+		removePrime,
 	});
 
 	updatePageStatus({
@@ -1110,6 +1115,7 @@ function observeSettingsChanges() {
 
 function applyStoredSettingsChanges(changes) {
 	const nextSettings = { ...STATE.settings };
+	const wasEnforcingPrime = STATE.settings.enforcePrime;
 	let settingsChanged = false;
 
 	for (const key of Object.keys(DEFAULT_SETTINGS)) {
@@ -1122,6 +1128,19 @@ function applyStoredSettingsChanges(changes) {
 	}
 
 	STATE.settings = sanitizeSettings(nextSettings);
+	if (
+		wasEnforcingPrime &&
+		!STATE.settings.enforcePrime &&
+		STATE.settings.enabled &&
+		isFilterableResultsPage()
+	) {
+		STATE.removePrimeAtUrl = window.location.href;
+	} else if (
+		("enforcePrime" in changes && STATE.settings.enforcePrime) ||
+		!STATE.settings.enabled
+	) {
+		STATE.removePrimeAtUrl = "";
+	}
 	return settingsChanged;
 }
 
