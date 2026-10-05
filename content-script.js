@@ -582,8 +582,7 @@ function scopeHasSponsoredText(scope) {
 		getSponsoredAttributeTexts(scope).some(matchesSponsoredLabelText) ||
 		getTextCandidates(scope, SPONSORED_TEXT_SELECTORS).some(
 			matchesSponsoredLabelText,
-		) ||
-		matchesSponsoredLabelText((scope.textContent || "").slice(0, 1600))
+		)
 	);
 }
 
@@ -695,7 +694,12 @@ function resolveSponsoredHideTarget(signalNode) {
 		return null;
 	}
 
-	return signalNode.closest(SPONSORED_HIDE_TARGET_SELECTOR);
+	const target = signalNode.closest(SPONSORED_HIDE_TARGET_SELECTOR);
+	return target &&
+		!target.matches(RESULTS_CONTAINER_SELECTOR) &&
+		!target.querySelector(RESULTS_CONTAINER_SELECTOR)
+		? target
+		: null;
 }
 
 function getStandaloneSponsoredBlocks(root = document.body) {
@@ -847,6 +851,10 @@ function scheduleApply(options = {}) {
 }
 
 function handleObservedCardChanges(cards, container) {
+	if (ensureCanonicalSearchUrl()) {
+		return;
+	}
+
 	if (!cards.length) {
 		refreshPageSummary(container);
 		return;
@@ -858,7 +866,7 @@ function handleObservedCardChanges(cards, container) {
 	}
 
 	applyProductFiltersToCards(cards);
-	applyStandaloneSponsoredBlocks(container);
+	applyStandaloneSponsoredBlocks(document.body);
 	refreshPageSummary(container);
 }
 
@@ -868,10 +876,7 @@ function mutationAddsStandaloneSponsoredModule(mutation) {
 			continue;
 		}
 
-		if (
-			matchesSelectorOrDescendant(node, SPONSORED_SIGNAL_SELECTOR) ||
-			matchesSelectorOrDescendant(node, SPONSORED_LINK_SELECTOR)
-		) {
+		if (matchesSelectorOrDescendant(node, SPONSORED_ANY_SELECTOR)) {
 			return true;
 		}
 	}
@@ -881,7 +886,10 @@ function mutationAddsStandaloneSponsoredModule(mutation) {
 
 function mutationAddsResultsContainer(mutation) {
 	for (const node of mutation.addedNodes) {
-		if (node instanceof Element && node.matches(RESULTS_CONTAINER_SELECTOR)) {
+		if (
+			node instanceof Element &&
+			matchesSelectorOrDescendant(node, RESULTS_CONTAINER_SELECTOR)
+		) {
 			return true;
 		}
 	}
@@ -948,7 +956,17 @@ function summarizeObservedMutations(mutations) {
 
 	for (const mutation of mutations) {
 		if (mutation.type === "attributes" || mutation.type === "characterData") {
-			rememberChangedCard(getMutationElementTarget(mutation), changedCards);
+			const target = getMutationElementTarget(mutation);
+			rememberChangedCard(target, changedCards);
+
+			if (
+				!target?.closest(RESULT_CARD_SELECTOR) &&
+				(target?.matches(SPONSORED_ANY_SELECTOR) ||
+					target?.closest(SPONSORED_ANY_SELECTOR))
+			) {
+				needsFullRefresh = true;
+				break;
+			}
 			continue;
 		}
 
@@ -968,6 +986,11 @@ function summarizeObservedMutations(mutations) {
 }
 
 function handleResultsMutations(mutations, container) {
+	if (findResultsContainer() !== container) {
+		scheduleApply({ fullRefresh: true });
+		return;
+	}
+
 	const { changedCards, needsFullRefresh, sawRemoval } =
 		summarizeObservedMutations(mutations);
 
@@ -1003,7 +1026,7 @@ function ensureResultsObserver(container) {
 		handleResultsMutations(mutations, container);
 	});
 
-	STATE.resultsObserver.observe(container, {
+	STATE.resultsObserver.observe(document.body || container, {
 		childList: true,
 		subtree: true,
 		attributes: true,
@@ -1213,7 +1236,7 @@ function applyResultsContainerFilters(container, shouldRunFullRefresh) {
 		clearSponsoredModuleState();
 	}
 
-	applyStandaloneSponsoredBlocks(container);
+	applyStandaloneSponsoredBlocks(document.body);
 	refreshPageSummary(container);
 }
 

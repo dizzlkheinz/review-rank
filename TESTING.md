@@ -15,6 +15,10 @@
 - Change the minimum ratings threshold and confirm low-review products are hidden.
 - Enable the brand whitelist and confirm non-allowlisted brands are hidden.
 - Use the popup refresh action and confirm the whitelist metadata updates.
+- On a search that loads results asynchronously, confirm Prime enforcement and review-rank sorting still apply after the first cards appear.
+- Confirm sponsored banners outside the main result list disappear, including banners inserted after page load. Turn sponsored blocking off and back on to check restoration.
+- Confirm an organic product with “Unsponsored” or “Sponsored” in its title stays visible when it has no advertisement labels or metadata.
+- Where review counts are abbreviated (for example, `1.2K`), set a threshold below and above the displayed count and confirm filtering follows the count.
 
 ## Firefox Android
 
@@ -32,5 +36,6 @@
 ## Regression Checks
 
 - Run `npm test`.
+- Automated regressions exercise the shipped content and background scripts with simulated DOM, storage, alarms, and network responses; they do not replace the browser checks above.
 - Run `node --check content-script.js`.
 - Confirm `manifest.json` parses as valid JSON.

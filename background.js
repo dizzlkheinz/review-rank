@@ -250,6 +250,10 @@ async function syncBrandWhitelist(options = {}) {
 async function recoverStaleSyncStatus() {
 	const state = await getStoredWhitelistState();
 
+	if (activeSyncPromise) {
+		return;
+	}
+
 	if (state.brandWhitelistSyncStatus === "syncing") {
 		await extensionApi.storage.local.set({
 			brandWhitelistSyncStatus: "error",
@@ -282,6 +286,12 @@ async function ensureRefreshAlarm() {
 	}
 
 	if (await isBrandWhitelistEnabled()) {
+		const existingAlarm = await getRefreshAlarm();
+
+		if (existingAlarm) {
+			return;
+		}
+
 		extensionApi.alarms.create(BRAND_WHITELIST_ALARM, {
 			delayInMinutes: 24 * 60,
 			periodInMinutes: 24 * 60,
@@ -289,6 +299,14 @@ async function ensureRefreshAlarm() {
 	} else if (extensionApi.alarms?.clear) {
 		extensionApi.alarms.clear(BRAND_WHITELIST_ALARM);
 	}
+}
+
+async function getRefreshAlarm() {
+	if (!extensionApi.alarms?.get) {
+		return null;
+	}
+
+	return extensionApi.alarms.get(BRAND_WHITELIST_ALARM);
 }
 
 function getBadgeApi() {

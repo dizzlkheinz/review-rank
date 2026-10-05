@@ -56,4 +56,4 @@ npm test         # test only
 npm run format   # format with Biome
 ```
 
-The test suite covers settings sanitization, locale-aware review count parsing (`.com`, `.de`, `.fr`, `.co.jp`), brand matching, sponsored label recognition, URL rewriting, and whitelist refresh logic.
+The test suite covers settings sanitization, locale-aware and abbreviated review count parsing, brand matching, sponsored label recognition, and URL rewriting. Integration tests execute the shipped content and background scripts to check dynamic results, standalone ads, whitelist refreshes, and alarm scheduling. See [TESTING.md](TESTING.md) for browser checks.

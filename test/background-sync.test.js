@@ -1,252 +1,346 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const shared = require("../prime-rank-shared.js");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
 
-// ---------------------------------------------------------------------------
-// 1. Whitelist normalization edge cases
-// ---------------------------------------------------------------------------
+const root = path.resolve(__dirname, "..");
+const backgroundSource = fs.readFileSync(
+	path.join(root, "background.js"),
+	"utf8",
+);
 
-test("normalizeBrandWhitelist returns empty array for empty input", () => {
-	assert.deepEqual(shared.normalizeBrandWhitelist([]), []);
-});
+function createBackgroundHarness({
+	initialStorage = {},
+	fetchImpl,
+	existingAlarm = null,
+} = {}) {
+	const storage = { ...initialStorage };
+	let alarm = existingAlarm;
+	const calls = {
+		fetch: 0,
+		alarmsCreated: [],
+		alarmsCleared: [],
+		sentMessages: [],
+	};
+	const listeners = {
+		installed: [],
+		startup: [],
+		alarm: [],
+		storageChanged: [],
+		message: [],
+	};
+	const local = {
+		async get(keys) {
+			if (keys == null) return { ...storage };
+			if (Array.isArray(keys)) {
+				return Object.fromEntries(keys.map((key) => [key, storage[key]]));
+			}
+			if (typeof keys === "string") return { [keys]: storage[keys] };
+			return {
+				...keys,
+				...Object.fromEntries(
+					Object.keys(keys)
+						.filter((key) => key in storage)
+						.map((key) => [key, storage[key]]),
+				),
+			};
+		},
+		async set(values) {
+			Object.assign(storage, values);
+		},
+	};
+	const browser = {
+		storage: {
+			local,
+			onChanged: {
+				addListener(fn) {
+					listeners.storageChanged.push(fn);
+				},
+			},
+		},
+		runtime: {
+			onInstalled: {
+				addListener(fn) {
+					listeners.installed.push(fn);
+				},
+			},
+			onStartup: {
+				addListener(fn) {
+					listeners.startup.push(fn);
+				},
+			},
+			onMessage: {
+				addListener(fn) {
+					listeners.message.push(fn);
+				},
+			},
+		},
+		alarms: {
+			create(name, options) {
+				calls.alarmsCreated.push({ name, options });
+				alarm = { name, ...options };
+			},
+			async clear(name) {
+				calls.alarmsCleared.push(name);
+				alarm = null;
+				return true;
+			},
+			async get(name) {
+				return alarm?.name === name ? alarm : undefined;
+			},
+			onAlarm: {
+				addListener(fn) {
+					listeners.alarm.push(fn);
+				},
+			},
+		},
+		tabs: {
+			async sendMessage(tabId, message) {
+				calls.sentMessages.push({ tabId, message });
+			},
+		},
+	};
+	const context = vm.createContext({
+		browser,
+		console: { error() {}, warn() {}, log() {} },
+		AbortController,
+		URL,
+		Date,
+		setTimeout,
+		clearTimeout,
+		fetch: async (...args) => {
+			calls.fetch += 1;
+			if (!fetchImpl) throw new Error("Unexpected fetch");
+			return fetchImpl(...args);
+		},
+	});
+	context.importScripts = (...files) => {
+		for (const file of files) {
+			vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), context, {
+				filename: file,
+			});
+		}
+	};
+	vm.runInContext(backgroundSource, context, { filename: "background.js" });
 
-test("normalizeBrandWhitelist strips nulls, undefined, and empty strings", () => {
-	assert.deepEqual(
-		shared.normalizeBrandWhitelist([null, undefined, "", "Apple"]),
-		["Apple"],
+	return {
+		context,
+		storage,
+		calls,
+		listeners,
+		async ready() {
+			// Let background.js's fire-and-forget startup initialization settle.
+			await new Promise((resolve) => setImmediate(resolve));
+			await new Promise((resolve) => setImmediate(resolve));
+		},
+		async sync(options = {}) {
+			return vm.runInContext(
+				`syncBrandWhitelist(${JSON.stringify(options)})`,
+				context,
+			);
+		},
+		async send(message) {
+			const listener = listeners.message[0];
+			assert.ok(listener, "background message listener registered");
+			return new Promise((resolve, reject) => {
+				const keepAlive = listener(message, {}, (response) =>
+					resolve(response),
+				);
+				if (keepAlive !== true)
+					reject(new Error("Expected async message response"));
+			});
+		},
+	};
+}
+
+function successfulResponse(text = "Acme\nGlobex\nInitech\nUmbrella\n") {
+	return {
+		ok: true,
+		status: 200,
+		headers: {
+			get() {
+				return String(Buffer.byteLength(text));
+			},
+		},
+		async text() {
+			return text;
+		},
+	};
+}
+
+test("background initializes fallback while disabled and does not fetch", async () => {
+	const harness = createBackgroundHarness();
+	await harness.ready();
+	assert.ok(
+		harness.storage.brandWhitelist.length > 0,
+		"bundled whitelist is stored",
 	);
+	assert.equal(harness.storage.brandWhitelistSource, "bundled");
+	assert.equal(harness.calls.fetch, 0);
+	assert.deepEqual(harness.calls.alarmsCleared, [
+		"prime-rank-filter-refresh-brand-whitelist",
+	]);
+	const status = await harness.send({
+		type: "prime-rank-filter:get-whitelist-status",
+	});
+	assert.equal(status.source, "bundled");
+	assert.equal(status.count, harness.storage.brandWhitelist.length);
 });
 
-test("normalizeBrandWhitelist deduplicates brands", () => {
-	assert.deepEqual(
-		shared.normalizeBrandWhitelist(["Apple", "Samsung", "Apple"]),
-		["Apple", "Samsung"],
+test("enabling whitelist schedules a daily refresh and starts a sync; disabling clears it", async () => {
+	const harness = createBackgroundHarness({
+		fetchImpl: async () => successfulResponse(),
+	});
+	await harness.ready();
+	const changeListener = harness.listeners.storageChanged[0];
+	harness.storage.brandWhitelistFetchedAt = 1;
+	harness.storage.useBrandWhitelist = true;
+	changeListener(
+		{ useBrandWhitelist: { oldValue: false, newValue: true } },
+		"local",
 	);
-});
+	await harness.ready();
+	assert.equal(harness.calls.alarmsCreated.length, 1);
+	assert.deepEqual(JSON.parse(JSON.stringify(harness.calls.alarmsCreated[0])), {
+		name: "prime-rank-filter-refresh-brand-whitelist",
+		options: { delayInMinutes: 1440, periodInMinutes: 1440 },
+	});
+	assert.equal(harness.calls.fetch, 1);
 
-test("normalizeBrandWhitelist removes whitespace-only brands", () => {
-	assert.deepEqual(
-		shared.normalizeBrandWhitelist(["  ", "\t", " \n ", "Sony"]),
-		["Sony"],
+	harness.storage.useBrandWhitelist = false;
+	changeListener(
+		{ useBrandWhitelist: { oldValue: true, newValue: false } },
+		"local",
 	);
-});
-
-test("normalizeBrandWhitelist returns empty array for non-array input", () => {
-	assert.deepEqual(shared.normalizeBrandWhitelist("not an array"), []);
-	assert.deepEqual(shared.normalizeBrandWhitelist(null), []);
-	assert.deepEqual(shared.normalizeBrandWhitelist(undefined), []);
-});
-
-// ---------------------------------------------------------------------------
-// 2. shouldRefreshBrandWhitelist logic
-// ---------------------------------------------------------------------------
-
-test("shouldRefreshBrandWhitelist returns false for fresh whitelist", () => {
+	await harness.ready();
 	assert.equal(
-		shared.shouldRefreshBrandWhitelist({
-			brandWhitelist: ["Apple"],
-			brandWhitelistFetchedAt: 10_000,
-			now: 10_000 + shared.BRAND_WHITELIST_MAX_AGE_MS - 1,
-		}),
-		false,
+		harness.calls.alarmsCleared.at(-1),
+		"prime-rank-filter-refresh-brand-whitelist",
 	);
 });
 
-test("shouldRefreshBrandWhitelist returns true for stale whitelist", () => {
-	assert.equal(
-		shared.shouldRefreshBrandWhitelist({
-			brandWhitelist: ["Apple"],
-			brandWhitelistFetchedAt: 10_000,
-			now: 10_000 + shared.BRAND_WHITELIST_MAX_AGE_MS + 1,
-		}),
-		true,
-	);
-});
-
-test("shouldRefreshBrandWhitelist returns true for empty whitelist regardless of age", () => {
-	assert.equal(
-		shared.shouldRefreshBrandWhitelist({
-			brandWhitelist: [],
-			brandWhitelistFetchedAt: Date.now(),
-			now: Date.now(),
-		}),
-		true,
-	);
-});
-
-test("shouldRefreshBrandWhitelist returns true at exact boundary", () => {
-	assert.equal(
-		shared.shouldRefreshBrandWhitelist({
-			brandWhitelist: ["Apple"],
-			brandWhitelistFetchedAt: 5_000,
-			now: 5_000 + shared.BRAND_WHITELIST_MAX_AGE_MS,
-		}),
-		true,
-	);
-});
-
-// ---------------------------------------------------------------------------
-// 3. parseBrandWhitelist edge cases
-// ---------------------------------------------------------------------------
-
-test("parseBrandWhitelist returns empty array for empty string", () => {
-	assert.deepEqual(shared.parseBrandWhitelist(""), []);
-});
-
-test("parseBrandWhitelist returns empty array for only newlines", () => {
-	assert.deepEqual(shared.parseBrandWhitelist("\n\n\n"), []);
-});
-
-test("parseBrandWhitelist handles Windows line endings", () => {
-	assert.deepEqual(shared.parseBrandWhitelist("Apple\r\nSamsung\r\nSony"), [
-		"Apple",
-		"Samsung",
-		"Sony",
+test("concurrent refresh requests share one remote request", async () => {
+	let releaseFetch;
+	const fetchGate = new Promise((resolve) => {
+		releaseFetch = resolve;
+	});
+	const harness = createBackgroundHarness({
+		fetchImpl: async () => {
+			await fetchGate;
+			return successfulResponse();
+		},
+	});
+	await harness.ready();
+	const first = harness.sync({ force: true });
+	const second = harness.sync({ force: true });
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(harness.calls.fetch, 1);
+	releaseFetch();
+	const [firstStatus, secondStatus] = await Promise.all([first, second]);
+	assert.deepEqual(firstStatus, secondStatus);
+	assert.equal(firstStatus.source, "remote");
+	assert.deepEqual(Array.from(harness.storage.brandWhitelist), [
+		"Acme",
+		"Globex",
+		"Initech",
+		"Umbrella",
 	]);
 });
 
-test("parseBrandWhitelist trims leading and trailing whitespace from brands", () => {
-	assert.deepEqual(
-		shared.parseBrandWhitelist("  Apple  \n  Samsung  \n  Sony  "),
-		["Apple", "Samsung", "Sony"],
-	);
-});
-
-// ---------------------------------------------------------------------------
-// 4. buildCanonicalSearchUrl additional cases
-// ---------------------------------------------------------------------------
-
-test("buildCanonicalSearchUrl makes no change when already canonical", () => {
-	const result = shared.buildCanonicalSearchUrl(
-		"https://www.amazon.com/s?k=test&s=review-rank&rh=p_85%3A2470955011",
-		{ primeToken: "p_85:2470955011" },
-	);
-
-	assert.equal(result.changed, false);
-	assert.equal(result.missingPrimeToken, false);
-});
-
-test("buildCanonicalSearchUrl handles URL with no search params", () => {
-	const result = shared.buildCanonicalSearchUrl("https://www.amazon.com/s", {
-		primeToken: "p_85:2470955011",
+test("failed refresh preserves a stored whitelist and records failure status", async () => {
+	const harness = createBackgroundHarness({
+		initialStorage: {
+			brandWhitelist: ["Existing Brand"],
+			brandWhitelistFetchedAt: Date.now(),
+			brandWhitelistSource: "remote",
+		},
+		fetchImpl: async () => {
+			throw new Error("offline");
+		},
 	});
-
-	assert.equal(result.changed, true);
-	assert.match(result.url, /s=review-rank/);
-	assert.match(result.url, /rh=p_85%3A2470955011/);
+	await harness.ready();
+	const status = await harness.sync({ force: true });
+	assert.deepEqual(harness.storage.brandWhitelist, ["Existing Brand"]);
+	assert.equal(status.source, "remote");
+	assert.equal(status.syncStatus, "error");
+	assert.equal(status.lastError, "offline");
+	assert.ok(status.lastAttemptAt > 0);
 });
 
-test("buildCanonicalSearchUrl adds prime token to existing rh param", () => {
-	const result = shared.buildCanonicalSearchUrl(
-		"https://www.amazon.com/s?k=test&s=review-rank&rh=n%3A172541",
-		{ primeToken: "p_85:2470955011" },
-	);
-
-	assert.equal(result.changed, true);
-	assert.match(result.url, /p_85%3A2470955011/);
-	assert.match(result.url, /n%3A172541/);
+test("failed first refresh keeps the bundled fallback available", async () => {
+	const harness = createBackgroundHarness({
+		fetchImpl: async () => {
+			throw new Error("offline");
+		},
+	});
+	await harness.ready();
+	const result = await harness.sync({ force: true });
+	assert.ok(harness.storage.brandWhitelist.length > 0);
+	assert.equal(result.source, "bundled");
+	assert.equal(result.syncStatus, "error");
+	assert.equal(result.lastError, "offline");
 });
 
-test("buildCanonicalSearchUrl does not duplicate existing prime token in rh", () => {
-	const result = shared.buildCanonicalSearchUrl(
-		"https://www.amazon.com/s?k=test&rh=p_85%3A2470955011",
-		{ primeToken: "p_85:2470955011" },
-	);
-
-	// The existing prime token is preserved; primeToken option should not add a duplicate
-	assert.equal(result.missingPrimeToken, false);
-	const rhMatches = result.url.match(/p_85%3A2470955011/g);
-	assert.equal(rhMatches.length, 1, "prime token should appear exactly once");
+test("an alarm refreshes the whitelist even when storage is enabled", async () => {
+	const harness = createBackgroundHarness({
+		initialStorage: {
+			useBrandWhitelist: true,
+			brandWhitelist: ["Old Brand"],
+			brandWhitelistFetchedAt: Date.now(),
+		},
+		fetchImpl: async () => successfulResponse(),
+	});
+	await harness.ready();
+	const alarmListener = harness.listeners.alarm[0];
+	alarmListener({ name: "unrelated-alarm" });
+	await harness.ready();
+	assert.equal(harness.calls.fetch, 0);
+	alarmListener({ name: "prime-rank-filter-refresh-brand-whitelist" });
+	await harness.ready();
+	assert.equal(harness.calls.fetch, 1);
+	assert.equal(harness.storage.brandWhitelistSource, "remote");
 });
 
-// ---------------------------------------------------------------------------
-// 5. Brand matching edge cases
-// ---------------------------------------------------------------------------
-
-test("brand with special characters (ampersand) matches correctly", () => {
-	const brandIndex = shared.buildBrandIndex(["Procter & Gamble"]);
-
-	assert.equal(
-		shared.matchWhitelistedBrand(["Procter & Gamble Laundry"], brandIndex),
-		"Procter & Gamble",
-	);
+test("worker startup preserves an existing daily alarm", async () => {
+	const harness = createBackgroundHarness({
+		initialStorage: {
+			useBrandWhitelist: true,
+			brandWhitelist: ["Existing Brand"],
+			brandWhitelistFetchedAt: Date.now(),
+		},
+		existingAlarm: {
+			name: "prime-rank-filter-refresh-brand-whitelist",
+			scheduledTime: Date.now() + 60_000,
+		},
+	});
+	await harness.ready();
+	assert.equal(harness.calls.alarmsCreated.length, 0);
+	assert.deepEqual(harness.calls.alarmsCleared, []);
 });
 
-test("brand with apostrophes matches correctly", () => {
-	const brandIndex = shared.buildBrandIndex(["L'Oreal Paris"]);
-
-	assert.equal(
-		shared.matchWhitelistedBrand(["L'Oreal Paris Mascara Volume"], brandIndex),
-		"L'Oreal Paris",
-	);
-});
-
-test("brand matching treats straight and curly apostrophes as equivalent", () => {
-	const brandIndex = shared.buildBrandIndex(["L’Oréal Paris"]);
-
-	assert.equal(
-		shared.matchWhitelistedBrand(["L'Oreal Paris Mascara Volume"], brandIndex),
-		"L’Oréal Paris",
-	);
-});
-
-test("brand with accented characters matches via normalization", () => {
-	const brandIndex = shared.buildBrandIndex(["Nestlé"]);
-
-	assert.equal(
-		shared.matchWhitelistedBrand(["Nestle Coffee"], brandIndex),
-		"Nestlé",
-	);
-});
-
-test("empty candidates array returns empty string", () => {
-	const brandIndex = shared.buildBrandIndex(["Apple"]);
-
-	assert.equal(shared.matchWhitelistedBrand([], brandIndex), "");
-});
-
-test("candidate that is a prefix of a brand but not a full match returns empty", () => {
-	const brandIndex = shared.buildBrandIndex(["Apple Computers"]);
-
-	// "Apple" alone should not match "Apple Computers" since the candidate is
-	// shorter than the brand. The brand index checks if the candidate starts
-	// with the brand, not the other way around.
-	assert.equal(
-		shared.matchWhitelistedBrand(["Apple"], brandIndex),
-		"",
-		"partial prefix of brand should not match",
-	);
-});
-
-// ---------------------------------------------------------------------------
-// 6. Rating count parsing edge cases
-// ---------------------------------------------------------------------------
-
-test("parses combined star rating and count text", () => {
-	assert.equal(
-		shared.parseRatingsCountFromTexts(["4.5 out of 5 stars, 1,234 ratings"]),
-		1234,
-	);
-});
-
-test("parses German-locale thousands separator (dot as separator)", () => {
-	// In DE locale, "1.234 Bewertungen" means 1234 ratings
-	assert.equal(shared.parseRatingsCountFromTexts(["1.234 Bewertungen"]), 1234);
-});
-
-test("returns 0 for text with no numbers", () => {
-	assert.equal(shared.parseRatingsCountFromTexts(["no numbers here"]), 0);
-});
-
-test("returns 0 for text with only a decimal rating", () => {
-	// "4.5" alone is a decimal rating <= 5, so it's not a count
-	assert.equal(shared.parseRatingsCountFromTexts(["4.5"]), 0);
-});
-
-test("returns 0 for empty candidates array", () => {
-	assert.equal(shared.parseRatingsCountFromTexts([]), 0);
-});
-
-test("returns 0 for candidates with empty strings", () => {
-	assert.equal(shared.parseRatingsCountFromTexts(["", ""]), 0);
+test("startup recovery leaves an in-process refresh marked as syncing", async () => {
+	let releaseFetch;
+	const fetchGate = new Promise((resolve) => {
+		releaseFetch = resolve;
+	});
+	const harness = createBackgroundHarness({
+		initialStorage: {
+			useBrandWhitelist: true,
+			brandWhitelist: ["Existing Brand"],
+			brandWhitelistFetchedAt: 1,
+		},
+		fetchImpl: async () => {
+			await fetchGate;
+			return successfulResponse();
+		},
+	});
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(harness.storage.brandWhitelistSyncStatus, "syncing");
+	harness.listeners.startup[0]();
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(harness.storage.brandWhitelistSyncStatus, "syncing");
+	releaseFetch();
+	await harness.ready();
+	assert.equal(harness.storage.brandWhitelistSyncStatus, "idle");
 });

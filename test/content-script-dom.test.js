@@ -20,20 +20,29 @@ const DEFAULT_TEST_URL =
 	"https://www.amazon.com/s?k=headphones&s=review-rank&rh=p_85%3A2470955011";
 
 function createTestWindow(html, url, replacedUrls) {
-	const { document, window } = parseHTML(
+	const { document, window: domWindow } = parseHTML(
 		`<!DOCTYPE html><html><body>${html}</body></html>`,
 	);
 
-	window.setTimeout = setTimeout;
-	window.clearTimeout = clearTimeout;
-	window.queueMicrotask = queueMicrotask;
-	window.console = console;
-	window.URL = URL;
-	window.location = {
-		href: url,
-		replace(nextUrl) {
-			replacedUrls.push(nextUrl);
-			this.href = nextUrl;
+	// LinkeDOM's window setters write to Node globals. Keep browser state local
+	// so observers and timers from another test cannot navigate this page.
+	const window = {
+		setTimeout,
+		clearTimeout,
+		queueMicrotask,
+		console,
+		URL,
+		Element: domWindow.Element,
+		MutationObserver: domWindow.MutationObserver,
+		addEventListener: domWindow.addEventListener,
+		removeEventListener: domWindow.removeEventListener,
+		dispatchEvent: domWindow.dispatchEvent,
+		location: {
+			href: url,
+			replace(nextUrl) {
+				replacedUrls.push(nextUrl);
+				this.href = nextUrl;
+			},
 		},
 	};
 
@@ -380,197 +389,6 @@ test("brand whitelist returns empty for non-whitelisted brand", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Card filtering logic (evaluateCard equivalent)
-// ---------------------------------------------------------------------------
-
-function getCardRatingsCount(document, shared, card) {
-	const ratingsTexts = getTextCandidates(document, card, RATING_TEXT_SELECTORS);
-	return shared.parseRatingsCountFromTexts(ratingsTexts);
-}
-
-function getBrandIndex(shared, settings, brandWhitelist) {
-	const normalizedWhitelist = shared.normalizeBrandWhitelist(brandWhitelist);
-
-	return settings.useBrandWhitelist && normalizedWhitelist.length
-		? shared.buildBrandIndex(normalizedWhitelist)
-		: null;
-}
-
-function getMatchedBrand(document, shared, card, settings, brandIndex) {
-	const brandTexts = getTextCandidates(document, card, BRAND_TEXT_SELECTORS);
-
-	return settings.useBrandWhitelist && brandIndex
-		? shared.matchWhitelistedBrand(brandTexts, brandIndex)
-		: "";
-}
-
-function isSponsoredTestCard(card, settings) {
-	return (
-		settings.hideSponsoredResults &&
-		(card.matches(SPONSORED_STRUCTURAL_SELECTOR) ||
-			Boolean(card.querySelector(SPONSORED_STRUCTURAL_SELECTOR)) ||
-			Boolean(card.closest("[data-component-type='sp-sponsored-result']")))
-	);
-}
-
-function getHiddenReasons(
-	settings,
-	ratingsCount,
-	sponsored,
-	brandIndex,
-	matchedBrand,
-) {
-	const hiddenReasons = [];
-
-	if (settings.hideSponsoredResults && sponsored) {
-		hiddenReasons.push("sponsored");
-	}
-
-	if (ratingsCount < settings.minimumRatings) {
-		hiddenReasons.push("low-reviews");
-	}
-
-	if (settings.useBrandWhitelist && brandIndex && !matchedBrand) {
-		hiddenReasons.push("brand");
-	}
-
-	return hiddenReasons;
-}
-
-function evaluateCard(document, shared, card, settings, brandWhitelist = []) {
-	const resolvedSettings = shared.sanitizeSettings(settings);
-	const ratingsCount = getCardRatingsCount(document, shared, card);
-	const brandIndex = getBrandIndex(shared, resolvedSettings, brandWhitelist);
-	const matchedBrand = getMatchedBrand(
-		document,
-		shared,
-		card,
-		resolvedSettings,
-		brandIndex,
-	);
-	const sponsored = isSponsoredTestCard(card, resolvedSettings);
-	const hiddenReasons = getHiddenReasons(
-		resolvedSettings,
-		ratingsCount,
-		sponsored,
-		brandIndex,
-		matchedBrand,
-	);
-
-	return {
-		keep: hiddenReasons.length === 0,
-		hiddenReasons,
-		ratingsCount,
-		matchedBrand,
-		sponsored,
-	};
-}
-
-test("card 1 (Samsung, 12345 reviews) passes default filters", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST01']");
-	const result = evaluateCard(document, shared, card, {
-		minimumRatings: 100,
-		hideSponsoredResults: true,
-	});
-	assert.equal(result.keep, true);
-	assert.equal(result.ratingsCount, 12345);
-});
-
-test("card 2 (42 reviews) hidden by minimumRatings=100", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST02']");
-	const result = evaluateCard(document, shared, card, { minimumRatings: 100 });
-	assert.equal(result.keep, false);
-	assert.ok(result.hiddenReasons.includes("low-reviews"));
-});
-
-test("card 2 passes when minimumRatings=0", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST02']");
-	const result = evaluateCard(document, shared, card, { minimumRatings: 0 });
-	assert.equal(result.keep, true);
-});
-
-test("card 3 (sponsored) is hidden when hideSponsoredResults=true", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST03']");
-	const result = evaluateCard(document, shared, card, {
-		minimumRatings: 0,
-		hideSponsoredResults: true,
-	});
-	assert.equal(result.keep, false);
-	assert.ok(result.hiddenReasons.includes("sponsored"));
-});
-
-test("card 3 passes when hideSponsoredResults=false", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST03']");
-	const result = evaluateCard(document, shared, card, {
-		minimumRatings: 0,
-		hideSponsoredResults: false,
-	});
-	assert.equal(result.keep, true);
-});
-
-test("card 5 (no reviews) hidden by minimumRatings=100", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST05']");
-	const result = evaluateCard(document, shared, card, { minimumRatings: 100 });
-	assert.equal(result.keep, false);
-	assert.ok(result.hiddenReasons.includes("low-reviews"));
-});
-
-test("brand whitelist hides non-whitelisted product from DOM", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST02']");
-	const result = evaluateCard(
-		document,
-		shared,
-		card,
-		{ minimumRatings: 0, useBrandWhitelist: true },
-		["Samsung", "Apple", "Sony"],
-	);
-	assert.equal(result.keep, false);
-	assert.ok(result.hiddenReasons.includes("brand"));
-});
-
-test("brand whitelist allows whitelisted product from DOM", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST01']");
-	const result = evaluateCard(
-		document,
-		shared,
-		card,
-		{ minimumRatings: 0, useBrandWhitelist: true },
-		["Samsung", "Apple", "Sony"],
-	);
-	assert.equal(result.keep, true);
-	assert.equal(result.matchedBrand, "Samsung");
-});
-
-// ---------------------------------------------------------------------------
-// Tests: Empty whitelist fails open (Issue #1)
-// ---------------------------------------------------------------------------
-
-test("empty brand whitelist does NOT hide products (fail-open)", () => {
-	const { document, shared } = createTestEnv();
-	const card = document.querySelector("[data-asin='B000TEST01']");
-	const result = evaluateCard(
-		document,
-		shared,
-		card,
-		{ minimumRatings: 0, useBrandWhitelist: true },
-		[],
-	);
-	assert.equal(result.keep, true, "should fail open when whitelist is empty");
-	assert.ok(
-		!result.hiddenReasons.includes("brand"),
-		"should not add brand to hidden reasons with empty whitelist",
-	);
-});
-
-// ---------------------------------------------------------------------------
 // Tests: Unicode brand normalization (Issue #12)
 // ---------------------------------------------------------------------------
 
@@ -634,6 +452,57 @@ test("matchesSponsoredLabelText returns false for unrelated text", () => {
 // Integration tests: execute the real content script
 // ---------------------------------------------------------------------------
 
+test("shipped script applies fixture filters to organic, low-review, and sponsored cards", async () => {
+	const env = await runContentScript();
+	const cases = [
+		["B000TEST01", "visible", "organic", ""],
+		["B000TEST02", "hidden", "organic", "low-reviews"],
+		["B000TEST03", "hidden", "sponsored", "sponsored"],
+		["B000TEST04", "hidden", "sponsored", "sponsored"],
+		["B000TEST05", "hidden", "organic", "low-reviews"],
+		["B000TEST06", "hidden", "sponsored", "sponsored"],
+	];
+
+	for (const [asin, filter, sponsored, reason] of cases) {
+		const card = env.document.querySelector(`[data-asin='${asin}']`);
+		assert.equal(card.dataset.primeRankFilter, filter, asin);
+		assert.equal(card.dataset.primeRankSponsored, sponsored, asin);
+		assert.equal(card.dataset.primeRankHiddenReasons, reason, asin);
+	}
+});
+
+test("shipped script updates review thresholds, sponsored blocking, and brand filtering", async () => {
+	const env = await runContentScript();
+	const card = (asin) => env.document.querySelector(`[data-asin='${asin}']`);
+	await env.extensionApi.storage.local.set({
+		minimumRatings: 0,
+		hideSponsoredResults: false,
+	});
+	await waitFor(220);
+	for (const asin of ["B000TEST02", "B000TEST03", "B000TEST05"]) {
+		assert.equal(card(asin).dataset.primeRankFilter, "visible", asin);
+	}
+	await env.extensionApi.storage.local.set({
+		useBrandWhitelist: true,
+		brandWhitelist: ["Samsung", "Apple", "Sony"],
+	});
+	await waitFor(220);
+	assert.equal(card("B000TEST01").dataset.primeRankFilter, "visible");
+	assert.equal(card("B000TEST01").dataset.primeRankBrand, "Samsung");
+	assert.equal(card("B000TEST02").dataset.primeRankFilter, "hidden");
+	assert.equal(card("B000TEST02").dataset.primeRankHiddenReasons, "brand");
+});
+
+test("shipped script fails open when brand filtering has an empty whitelist", async () => {
+	const env = await runContentScript({
+		storage: { useBrandWhitelist: true, brandWhitelist: [] },
+	});
+	const card = env.document.querySelector("[data-asin='B000TEST01']");
+
+	assert.equal(card.dataset.primeRankFilter, "visible");
+	assert.equal(card.dataset.primeRankHiddenReasons, "");
+});
+
 test("content script applies filters when results load after init", async () => {
 	const env = await runContentScript({ html: "" });
 
@@ -650,6 +519,115 @@ test("content script applies filters when results load after init", async () => 
 		"late-loaded low-review card should be filtered",
 	);
 	assert.equal(lateCard.getAttribute("aria-hidden"), "true");
+});
+
+test("content script canonicalizes after cards enter an initially empty results container", async () => {
+	const env = await runContentScript({
+		html: '<div class="s-main-slot s-result-list"></div>',
+		url: "https://www.amazon.ca/s?k=goartea",
+	});
+	const container = env.document.querySelector(".s-main-slot");
+	assert.deepEqual(env.replacedUrls, [], "empty results do not redirect yet");
+	container.innerHTML =
+		'<div data-component-type="s-search-result" data-asin="LATE01"><h2>Goartea</h2></div>';
+	await waitFor(250);
+
+	assert.equal(
+		env.replacedUrls.length,
+		1,
+		"late results trigger canonicalization",
+	);
+	assert.match(env.replacedUrls[0], /p_85%3A5690392011/);
+	assert.match(env.replacedUrls[0], /s=review-rank/);
+	const status = await getPageStatus(env);
+	assert.equal(status.primeStatus, "enforced");
+	assert.equal(status.sortStatus, "review-rank");
+});
+
+for (const title of ["Sponsored: A Memoir", "Unsponsored: A Memoir"]) {
+	test(`organic title ${JSON.stringify(title)} does not trigger sponsored filtering`, async () => {
+		const env = await runContentScript();
+		const card = env.document.querySelector("[data-asin='B000TEST01']");
+		card.querySelector("h2").textContent = title;
+		await waitFor(250);
+
+		assert.equal(card.dataset.primeRankFilter, "visible");
+		assert.equal(card.dataset.primeRankSponsored, "organic");
+	});
+}
+
+for (const [minimumRatings, expectedFilter] of [
+	[1000, "visible"],
+	[1500, "hidden"],
+]) {
+	test(`shipped script parses 1.2K reviews at a threshold of ${minimumRatings}`, async () => {
+		const html = fixtureHtml.replace("12,345", "1.2K");
+		const env = await runContentScript({
+			html,
+			storage: { minimumRatings },
+		});
+		const card = env.document.querySelector("[data-asin='B000TEST01']");
+
+		assert.equal(card.dataset.primeRankReviewCount, "1200");
+		assert.equal(card.dataset.primeRankFilter, expectedFilter);
+	});
+}
+
+test("standalone sponsored modules outside results are observed and restored when disabled", async () => {
+	const env = await runContentScript();
+	const results = env.document.querySelector(".s-main-slot");
+	const fixtureModule = env.document.querySelector(
+		"[data-component-type='s-impression-logger'] .sg-col-inner",
+	);
+	const module = env.document.createElement("div");
+	module.className = "sg-col-inner";
+	module.innerHTML = '<div class="ad-signal">An ad</div>';
+	env.document.body.append(module);
+	await waitFor(40);
+	assert.equal(module.dataset.primeRankSponsoredModule, undefined);
+
+	module
+		.querySelector(".ad-signal")
+		.setAttribute("data-ad-feedback-label-id", "sponsored-label");
+	await waitFor(250);
+
+	assert.equal(module.dataset.primeRankSponsoredModule, "hidden");
+	assert.equal(module.style.getPropertyValue("display"), "none");
+	assert.equal(fixtureModule.dataset.primeRankSponsoredModule, "hidden");
+	assert.ok(!results.style.getPropertyValue("display"));
+
+	await env.extensionApi.storage.local.set({ hideSponsoredResults: false });
+	await waitFor(250);
+	assert.equal(module.dataset.primeRankSponsoredModule, undefined);
+	assert.ok(!module.style.getPropertyValue("display"));
+	assert.equal(fixtureModule.dataset.primeRankSponsoredModule, undefined);
+	assert.ok(!fixtureModule.style.getPropertyValue("display"));
+
+	await env.extensionApi.storage.local.set({ hideSponsoredResults: true });
+	await waitFor(250);
+	assert.equal(module.dataset.primeRankSponsoredModule, "hidden");
+	assert.equal(fixtureModule.dataset.primeRankSponsoredModule, "hidden");
+
+	await env.extensionApi.storage.local.set({ enabled: false });
+	await waitFor(250);
+	assert.equal(module.dataset.primeRankSponsoredModule, undefined);
+	assert.ok(!module.style.getPropertyValue("display"));
+	assert.equal(fixtureModule.dataset.primeRankSponsoredModule, undefined);
+	assert.ok(!fixtureModule.style.getPropertyValue("display"));
+});
+
+test("sponsored detection never hides a wrapper containing the results list", async () => {
+	const env = await runContentScript({
+		html: `<div class="sg-col-inner" id="layout">${fixtureHtml}<span data-ad-feedback-label-id="banner">Ad</span></div>`,
+	});
+	const layout = env.document.getElementById("layout");
+	assert.equal(layout.dataset.primeRankSponsoredModule, undefined);
+	assert.ok(!layout.style.getPropertyValue("display"));
+	assert.equal(
+		env.document.querySelector("[data-asin='B000TEST01']").dataset
+			.primeRankFilter,
+		"visible",
+	);
 });
 
 test("content script re-evaluates a card when a sponsored href is added", async () => {

@@ -62,6 +62,8 @@
 		const COUNT_KEYWORD_PATTERN =
 			/\b(ratings?|reviews?|bewertung(?:en)?|rezension(?:en)?|evaluations?|avis|calificaciones?|opiniones|recensioni|recensies|avaliac(?:ao|oes)|ratings)\b/i;
 		const RATING_NUMBER_PATTERN = /\d+(?:[.,\u202f\u00a0\s]\d+)*/g;
+		const ABBREVIATED_COUNT_PATTERN =
+			/(\d+(?:[.,]\d+)?)\s*(k|m|tsd\.?|mil)(?![\p{L}])/giu;
 		const SPONSORED_TEXT_PATTERN =
 			/\b(sponsored|gesponsert|sponsorise|sponsorisé|patrocinad[oa]s?|sponsorizzat[oa]s?|gesponsord|sponsorowane|sponsrad|sponsret|sponsad|sponsorlu)\b/i;
 
@@ -314,6 +316,21 @@
 				return 0;
 			}
 
+			const abbreviatedCounts = [
+				...rawText.matchAll(ABBREVIATED_COUNT_PATTERN),
+			].map((match) => {
+				const suffix = match[2].toLowerCase();
+				const multiplier = suffix === "m" ? 1_000_000 : 1_000;
+				const numericValue = Number(match[1].replace(",", "."));
+				return Number.isFinite(numericValue)
+					? Math.round(numericValue * multiplier)
+					: 0;
+			});
+
+			if (abbreviatedCounts.length) {
+				return Math.max(...abbreviatedCounts);
+			}
+
 			const parsedNumbers = parseRatingNumbers(rawText);
 
 			if (!parsedNumbers.length) {
@@ -374,7 +391,8 @@
 		function decodeRefinementText(text) {
 			return String(text ?? "")
 				.replace(/%(?:25)?3A/gi, ":")
-				.replace(/%(?:25)?7C/gi, "|");
+				.replace(/%(?:25)?7C/gi, "|")
+				.replace(/%(?:25)?2C/gi, ",");
 		}
 
 		function extractPrimeTokensFromText(text) {
