@@ -19,7 +19,43 @@ const fixtureHtml = fs.readFileSync(
 const DEFAULT_TEST_URL =
 	"https://www.amazon.com/s?k=headphones&s=review-rank&rh=p_85%3A2470955011";
 
-function createTestWindow(html, url, replacedUrls) {
+function createControlledMutationObserverSet() {
+	const observers = [];
+
+	class ControlledMutationObserver {
+		constructor(callback) {
+			this.callback = callback;
+			this.options = null;
+			this.target = null;
+			this.disconnected = false;
+			observers.push(this);
+		}
+
+		observe(target, options) {
+			this.target = target;
+			this.options = options;
+			this.disconnected = false;
+		}
+
+		disconnect() {
+			this.disconnected = true;
+		}
+
+		takeRecords() {
+			return [];
+		}
+
+		dispatch(records) {
+			if (!this.disconnected) {
+				this.callback(records, this);
+			}
+		}
+	}
+
+	return { MutationObserver: ControlledMutationObserver, observers };
+}
+
+function createTestWindow(html, url, replacedUrls, MutationObserver) {
 	const { document, window: domWindow } = parseHTML(
 		`<!DOCTYPE html><html><body>${html}</body></html>`,
 	);
@@ -33,7 +69,7 @@ function createTestWindow(html, url, replacedUrls) {
 		console,
 		URL,
 		Element: domWindow.Element,
-		MutationObserver: domWindow.MutationObserver,
+		MutationObserver: MutationObserver || domWindow.MutationObserver,
 		addEventListener: domWindow.addEventListener,
 		removeEventListener: domWindow.removeEventListener,
 		dispatchEvent: domWindow.dispatchEvent,
@@ -122,13 +158,23 @@ function loadSharedApi() {
 }
 
 function createTestEnv(options = {}) {
-	const { html = fixtureHtml, storage = {}, url = DEFAULT_TEST_URL } = options;
+	const {
+		html = fixtureHtml,
+		storage = {},
+		url = DEFAULT_TEST_URL,
+		mutationObserverSet,
+	} = options;
 	const storageData = { ...storage };
 	const sentMessages = [];
 	const runtimeMessageListeners = [];
 	const storageChangeListeners = [];
 	const replacedUrls = [];
-	const { document, window } = createTestWindow(html, url, replacedUrls);
+	const { document, window } = createTestWindow(
+		html,
+		url,
+		replacedUrls,
+		mutationObserverSet?.MutationObserver,
+	);
 	const extensionApi = {
 		storage: createStorageApi(storageData, storageChangeListeners),
 		runtime: createRuntimeApi(sentMessages, runtimeMessageListeners),
@@ -143,6 +189,7 @@ function createTestEnv(options = {}) {
 		sentMessages,
 		runtimeMessageListeners,
 		replacedUrls,
+		mutationObserverSet,
 	};
 }
 
@@ -189,6 +236,14 @@ function waitFor(ms = 0) {
 	return new Promise((resolve) => {
 		setTimeout(resolve, ms);
 	});
+}
+
+function dispatchResultMutation(env, record) {
+	const observer = env.mutationObserverSet?.observers.find(
+		(candidate) => candidate.options?.characterData,
+	);
+	assert.ok(observer, "results mutation observer should be installed");
+	observer.dispatch([record]);
 }
 
 async function runContentScript(options = {}) {
@@ -616,6 +671,167 @@ test("standalone sponsored modules outside results are observed and restored whe
 	assert.ok(!fixtureModule.style.getPropertyValue("display"));
 });
 
+test("standalone modules are restored when their last sponsored signal disappears", async () => {
+	const mutationObserverSet = createControlledMutationObserverSet();
+	const html = `${fixtureHtml}
+		<div class="sg-col-inner" id="attribute-ad">
+			<span id="attribute-signal" data-ad-feedback-label-id="sponsored-label">Ad</span>
+		</div>
+		<div class="sg-col-inner" id="removed-subtree-ad">
+			<span id="removed-signal" data-ad-feedback-label-id="sponsored-label">Ad</span>
+		</div>
+		<div class="sg-col-inner" id="recycled-ad">
+			<span id="recycled-signal" data-ad-feedback-label-id="sponsored-label">Ad</span>
+		</div>`;
+	const env = await runContentScript({ html, mutationObserverSet });
+	const attributeModule = env.document.getElementById("attribute-ad");
+	const attributeSignal = env.document.getElementById("attribute-signal");
+	const subtreeModule = env.document.getElementById("removed-subtree-ad");
+	const removedSignal = env.document.getElementById("removed-signal");
+	const recycledModule = env.document.getElementById("recycled-ad");
+	const recycledSignal = env.document.getElementById("recycled-signal");
+	const fixtureModule = env.document.querySelector(
+		"[data-component-type='s-impression-logger'] .sg-col-inner",
+	);
+	const lowReviewCard = env.document.querySelector("[data-asin='B000TEST02']");
+
+	assert.equal(attributeModule.dataset.primeRankSponsoredModule, "hidden");
+	assert.equal(subtreeModule.dataset.primeRankSponsoredModule, "hidden");
+
+	attributeSignal.removeAttribute("data-ad-feedback-label-id");
+	dispatchResultMutation(env, {
+		type: "attributes",
+		target: attributeSignal,
+		attributeName: "data-ad-feedback-label-id",
+	});
+	await waitFor(250);
+	assert.equal(
+		attributeModule.dataset.primeRankSponsoredModule,
+		undefined,
+		"removing the final signal attribute restores its module",
+	);
+	assert.ok(!attributeModule.style.getPropertyValue("display"));
+
+	removedSignal.remove();
+	dispatchResultMutation(env, {
+		type: "childList",
+		target: subtreeModule,
+		addedNodes: [],
+		removedNodes: [removedSignal],
+	});
+	recycledSignal.remove();
+	recycledModule.dataset.componentType = "s-search-result";
+	recycledModule.dataset.asin = "RECYCLEDLOW";
+	recycledModule.innerHTML = `<h2><span>Reused low review result</span></h2>
+		<a href="/product-reviews/RECYCLEDLOW/customerReviews"><span class="s-underline-text">42</span></a>`;
+	dispatchResultMutation(env, {
+		type: "attributes",
+		target: recycledModule,
+		attributeName: "data-component-type",
+	});
+	dispatchResultMutation(env, {
+		type: "attributes",
+		target: recycledModule,
+		attributeName: "data-asin",
+	});
+	await waitFor(250);
+
+	for (const module of [attributeModule, subtreeModule]) {
+		assert.equal(module.dataset.primeRankSponsoredModule, undefined);
+		assert.ok(!module.style.getPropertyValue("display"));
+	}
+	assert.equal(fixtureModule.dataset.primeRankSponsoredModule, "hidden");
+	assert.equal(fixtureModule.style.getPropertyValue("display"), "none");
+	assert.equal(lowReviewCard.dataset.primeRankFilter, "hidden");
+	assert.equal(lowReviewCard.style.getPropertyValue("display"), "none");
+	assert.equal(recycledModule.dataset.primeRankSponsoredModule, undefined);
+	assert.equal(recycledModule.dataset.primeRankFilter, "hidden");
+	assert.equal(recycledModule.style.getPropertyValue("display"), "none");
+});
+
+test("card-contained signal and media markers still identify sponsored results", async () => {
+	const env = await runContentScript({
+		html: `<div class="s-main-slot s-result-list">
+			<div data-component-type="s-search-result" data-asin="SIGNAL01">
+				<h2><span>Signal ad</span></h2>
+				<a href="/product-reviews/SIGNAL01/customerReviews"><span class="s-underline-text">1,200</span></a>
+				<span data-ad-feedback-label-id="sponsored-label">Ad</span>
+			</div>
+			<div data-component-type="s-search-result" data-asin="MEDIA01">
+				<h2><span>Media ad</span></h2>
+				<a href="/product-reviews/MEDIA01/customerReviews"><span class="s-underline-text">1,200</span></a>
+				<img alt="Sponsored Ad">
+			</div>
+		</div>`,
+	});
+
+	for (const asin of ["SIGNAL01", "MEDIA01"]) {
+		const card = env.document.querySelector(`[data-asin='${asin}']`);
+		assert.equal(card.dataset.primeRankFilter, "hidden", asin);
+		assert.ok(card.dataset.primeRankHiddenReasons.includes("sponsored"), asin);
+		assert.equal(card.dataset.primeRankSponsoredModule, undefined, asin);
+	}
+});
+
+test("nested Amazon item wrappers follow their inner result rating mutations", async () => {
+	const mutationObserverSet = createControlledMutationObserverSet();
+	const html = `<div class="s-main-slot s-result-list">
+		<div class="s-widget-container" data-csa-c-type="item" data-csa-c-item-id="amzn1.asin.B000NEST01">
+			<div data-component-type="s-search-result" data-asin="B000NEST01">
+				<h2><a><span>Samsung headphones</span></a></h2>
+				<a href="/product-reviews/B000NEST01/customerReviews"><span class="s-underline-text">42</span></a>
+			</div>
+		</div>
+	</div>`;
+	const env = await runContentScript({
+		html,
+		mutationObserverSet,
+		storage: { minimumRatings: 500 },
+	});
+	const outer = env.document.querySelector(
+		".s-widget-container[data-csa-c-item-id*='.asin']",
+	);
+	const count = outer.querySelector(".s-underline-text").firstChild;
+
+	assert.equal(outer.dataset.primeRankFilter, "hidden");
+	assert.equal(outer.dataset.primeRankReviewCount, "42");
+	assert.equal(outer.style.getPropertyValue("display"), "none");
+
+	count.nodeValue = "1,000";
+	dispatchResultMutation(env, {
+		type: "characterData",
+		target: count,
+	});
+	await waitFor(250);
+	assert.equal(outer.dataset.primeRankReviewCount, "1000");
+	assert.equal(outer.dataset.primeRankFilter, "visible");
+	assert.ok(!outer.style.getPropertyValue("display"));
+	assert.ok(!outer.hasAttribute("aria-hidden"));
+
+	count.nodeValue = "42";
+	dispatchResultMutation(env, {
+		type: "characterData",
+		target: count,
+	});
+	await waitFor(250);
+	assert.equal(outer.dataset.primeRankReviewCount, "42");
+	assert.equal(outer.dataset.primeRankFilter, "hidden");
+	assert.equal(outer.style.getPropertyValue("display"), "none");
+	assert.equal(outer.getAttribute("aria-hidden"), "true");
+});
+
+test("badge counts five hidden cards and one standalone module", async () => {
+	const env = await runContentScript();
+	const status = await getPageStatus(env);
+	const badgeUpdate = [...env.sentMessages]
+		.reverse()
+		.find((message) => message.type === "prime-rank-filter:update-badge");
+
+	assert.equal(status.hiddenCount, 5);
+	assert.equal(status.hiddenSponsoredModules, 1);
+	assert.equal(badgeUpdate.hiddenCount, 6);
+});
+
 test("sponsored detection never hides a wrapper containing the results list", async () => {
 	const env = await runContentScript({
 		html: `<div class="sg-col-inner" id="layout">${fixtureHtml}<span data-ad-feedback-label-id="banner">Ad</span></div>`,
@@ -628,6 +844,33 @@ test("sponsored detection never hides a wrapper containing the results list", as
 			.primeRankFilter,
 		"visible",
 	);
+});
+
+test("a sponsored sibling banner does not hide the only organic result card", async () => {
+	const env = await runContentScript({
+		html: `<div class="s-main-slot s-result-list"><div class="sg-col-inner" id="shared-result-banner">
+		<div data-component-type="s-search-result" data-asin="ORGANIC01">
+			<h2><a><span>Samsung headphones</span></a></h2>
+			<a href="/product-reviews/ORGANIC01/customerReviews"><span class="s-underline-text">1,234</span></a>
+		</div>
+		<div class="banner"><span data-ad-feedback-label-id="sponsored-label">Sponsored</span></div>
+	</div><div class="sg-col-inner" id="separate-sponsored-ad"><span data-ad-feedback-label-id="sponsored-label">Sponsored ad</span></div></div>`,
+	});
+	const card = env.document.querySelector("[data-asin='ORGANIC01']");
+	const sharedAncestor = env.document.getElementById("shared-result-banner");
+	const separateAd = env.document.getElementById("separate-sponsored-ad");
+	const status = await getPageStatus(env);
+
+	assert.equal(card.dataset.primeRankFilter, "visible");
+	assert.equal(card.dataset.primeRankSponsored, "organic");
+	assert.ok(!card.style.getPropertyValue("display"));
+	assert.ok(!card.hasAttribute("aria-hidden"));
+	assert.equal(sharedAncestor.dataset.primeRankSponsoredModule, undefined);
+	assert.ok(!sharedAncestor.style.getPropertyValue("display"));
+	assert.equal(status.visibleCount, 1);
+	assert.equal(status.hiddenCount, 0);
+	assert.equal(separateAd.dataset.primeRankSponsoredModule, "hidden");
+	assert.equal(separateAd.style.getPropertyValue("display"), "none");
 });
 
 test("content script re-evaluates a card when a sponsored href is added", async () => {

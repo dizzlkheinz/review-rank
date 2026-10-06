@@ -520,6 +520,18 @@ function getSponsoredDetectionScopes(card) {
 			break;
 		}
 
+		// A page can contain a single result card alongside a sponsored banner.
+		// Do not let a signal belonging to that sibling make the product appear
+		// sponsored merely because the ancestor currently contains one result.
+		if (
+			!currentNode.matches(SPONSORED_STRUCTURAL_SELECTOR) &&
+			Array.from(currentNode.querySelectorAll(SPONSORED_ANY_SELECTOR)).some(
+				(signal) => !card.contains(signal),
+			)
+		) {
+			break;
+		}
+
 		scopes.push(currentNode);
 		currentNode = currentNode.parentElement;
 	}
@@ -589,6 +601,8 @@ function scopeHasSponsoredText(scope) {
 function scopeLooksSponsored(scope) {
 	return (
 		scopeHasSponsoredStructure(scope) ||
+		matchesSelectorOrDescendant(scope, SPONSORED_SIGNAL_SELECTOR) ||
+		matchesSelectorOrDescendant(scope, SPONSORED_MEDIA_SELECTOR) ||
 		scopeHasSponsoredText(scope) ||
 		scopeContainsSponsoredLink(scope)
 	);
@@ -684,7 +698,9 @@ function clearSponsoredModuleState() {
 	for (const node of document.querySelectorAll(
 		"[data-prime-rank-sponsored-module='hidden']",
 	)) {
-		node.style.removeProperty("display");
+		if (node.dataset.primeRankFilter !== "hidden") {
+			node.style.removeProperty("display");
+		}
 		delete node.dataset.primeRankSponsoredModule;
 	}
 }
@@ -694,10 +710,17 @@ function resolveSponsoredHideTarget(signalNode) {
 		return null;
 	}
 
+	// Sponsored signals inside a product result are handled by the product-card
+	// filter. A separate module target here would count and hide the same ad twice.
+	if (resolveResultCardRoot(signalNode)) {
+		return null;
+	}
+
 	const target = signalNode.closest(SPONSORED_HIDE_TARGET_SELECTOR);
 	return target &&
 		!target.matches(RESULTS_CONTAINER_SELECTOR) &&
-		!target.querySelector(RESULTS_CONTAINER_SELECTOR)
+		!target.querySelector(RESULTS_CONTAINER_SELECTOR) &&
+		getSearchResultCards(target).length === 0
 		? target
 		: null;
 }
@@ -718,11 +741,37 @@ function getStandaloneSponsoredBlocks(root = document.body) {
 		}
 	}
 
-	return Array.from(blocks);
+	// Multiple signals in one ad module can resolve to nested hide targets.
+	// Keep one target per overlapping branch so the status badge counts modules,
+	// not each nested wrapper carrying a sponsored marker.
+	return Array.from(blocks).filter(
+		(block) =>
+			!Array.from(blocks).some(
+				(other) => other !== block && other.contains(block),
+			),
+	);
 }
 
 function applyStandaloneSponsoredBlocks(root = document.body) {
-	for (const block of getStandaloneSponsoredBlocks(root)) {
+	const matchedBlocks = new Set(getStandaloneSponsoredBlocks(root));
+
+	// A block may stop matching as soon as Amazon removes its last sponsored
+	// signal. Reconcile our markers against the current matches so stale hides
+	// are released during both incremental updates and full refreshes.
+	for (const node of document.querySelectorAll(
+		"[data-prime-rank-sponsored-module='hidden']",
+	)) {
+		if (matchedBlocks.has(node)) {
+			continue;
+		}
+
+		if (node.dataset.primeRankFilter !== "hidden") {
+			node.style.removeProperty("display");
+		}
+		delete node.dataset.primeRankSponsoredModule;
+	}
+
+	for (const block of matchedBlocks) {
 		block.style.setProperty("display", "none", "important");
 		block.dataset.primeRankSponsoredModule = "hidden";
 	}
@@ -902,7 +951,7 @@ function rememberChangedCard(node, changedCards) {
 		return;
 	}
 
-	const owningCard = node.closest(RESULT_CARD_SELECTOR);
+	const owningCard = resolveResultCardRoot(node);
 
 	if (!owningCard) {
 		return;
@@ -962,7 +1011,8 @@ function summarizeObservedMutations(mutations) {
 			if (
 				!target?.closest(RESULT_CARD_SELECTOR) &&
 				(target?.matches(SPONSORED_ANY_SELECTOR) ||
-					target?.closest(SPONSORED_ANY_SELECTOR))
+					target?.closest(SPONSORED_ANY_SELECTOR) ||
+					target?.closest("[data-prime-rank-sponsored-module='hidden']"))
 			) {
 				needsFullRefresh = true;
 				break;
@@ -1005,6 +1055,7 @@ function handleResultsMutations(mutations, container) {
 	}
 
 	if (sawRemoval) {
+		applyStandaloneSponsoredBlocks(document.body);
 		refreshPageSummary(container);
 	}
 }
